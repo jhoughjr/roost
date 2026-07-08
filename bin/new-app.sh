@@ -68,6 +68,7 @@ case "$KIND" in
 <main>
   <h1>${NAME}</h1>
   <p>Scaffolded by <code>new-app.sh</code> — edit <code>index.html</code> and <code>git push dokku main</code>.</p>
+  <p style="margin-top:.75rem;font-size:.85rem"><a href="https://github.com/jhoughjr/roost" style="color:var(--accent);text-decoration:none">Powered by Roost</a></p>
 </main>
 </body>
 </html>
