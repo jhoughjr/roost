@@ -9,10 +9,24 @@ Usage: fleet-board.py [output-path]   (default: ~/status-site/fleet/board.json)
 """
 import json, os, re, subprocess, sys, datetime
 
-DOKKU = "dokku@192.168.0.103"
-HOST_IP = "192.168.0.103"
-DOMAIN = "jimmyhoughjr.net"
-METRIC_APP = "vault"  # any always-on app; used to read host metrics via `run`
+def _rc():
+    cfg = {}
+    try:
+        for line in open(os.path.expanduser("~/.roostrc")):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                cfg[k.strip()] = os.path.expandvars(v.strip())
+    except OSError:
+        pass
+    return cfg
+
+_RC = _rc()
+DOKKU = _RC.get("ROOST_DOKKU_HOST", "dokku@192.168.0.103")
+HOST_IP = DOKKU.split("@")[-1]
+DOMAIN = _RC.get("ROOST_DOMAIN", "jimmyhoughjr.net")
+METRIC_APP = _RC.get("ROOST_METRIC_APP", "vault")  # host metrics via `run`
+STATUS_SITE = os.path.expanduser(_RC.get("ROOST_STATUS_SITE", "~/status-site"))
 
 def ssh(*args, timeout=30):
     r = subprocess.run(["ssh", "-o", "BatchMode=yes", DOKKU, *args],
@@ -33,7 +47,7 @@ def http_check(fqdn):
         return "000"
 
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/status-site/fleet/board.json")
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(STATUS_SITE, "fleet/board.json")
     apps = [a.strip() for a in ssh("apps:list").splitlines()
             if a.strip() and not a.startswith("=")]
 

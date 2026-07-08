@@ -17,8 +17,9 @@
 # Requires: dokku@ key auth to the pi, and ~/.cf_api_token (see publish-route.sh).
 set -euo pipefail
 
-DOKKU="dokku@192.168.0.103"
-DOMAIN="jimmyhoughjr.net"
+[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
+DOKKU="${ROOST_DOKKU_HOST:-dokku@192.168.0.103}"
+DOMAIN="${ROOST_DOMAIN:-jimmyhoughjr.net}"
 BIN="$(cd "$(dirname "$0")" && pwd)"
 
 NAME="" KIND="static" DIR=""
@@ -82,6 +83,7 @@ HTML
   node)
     printf 'FROM node:22-alpine\nWORKDIR /app\nCOPY server.js .\nEXPOSE 80\nCMD ["node", "server.js"]\n' > "$DIR/Dockerfile"
     printf '.git\n' > "$DIR/.dockerignore"
+    cp "$BIN/../assets/favicon.svg" "$DIR/favicon.svg" 2>/dev/null || true
     cat > "$DIR/server.js" <<'JS'
 const http = require("http");
 http.createServer((req, res) => {

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# roost — one command for the whole platform.
+#
+#   roost new <name> [--static|--node|--swift]   nothing → live app
+#   roost route <subdomain>                      publish a tunnel route
+#   roost fleet                                  refresh the fleet board json
+#   roost backup                                 pull pi data to ~/Backups/roost
+#   roost status ["message"]                     push status site (fleet+history+ledger)
+#   roost doctor                                 diagnose the setup
+set -euo pipefail
+BIN="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
+DOKKU="${ROOST_DOKKU_HOST:-dokku@192.168.0.103}"
+DOMAIN="${ROOST_DOMAIN:-jimmyhoughjr.net}"
+STATUS_SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  new)    exec "$BIN/new-app.sh" "$@" ;;
+  route)  exec "$BIN/publish-route.sh" "$@" ;;
+  fleet)  exec "$BIN/fleet-board.py" "$@" ;;
+  backup) exec "$BIN/backup-roost.sh" "$@" ;;
+  status) exec "$STATUS_SITE/push-status.sh" "$@" ;;
+  doctor)
+    fail=0
+    say() { printf "%-38s %s\n" "$1" "$2"; }
+    if [ -f "$HOME/.roostrc" ]; then say "~/.roostrc" "✓ present"; else say "~/.roostrc" "– missing (using defaults; copy roostrc.example)"; fi
+
+    if ssh -o BatchMode=yes -o ConnectTimeout=8 "$DOKKU" version > /dev/null 2>&1; then
+      say "dokku ssh ($DOKKU)" "✓ ok"
+    else
+      say "dokku ssh ($DOKKU)" "✗ FAILED — key not added? (dokku ssh-keys:add)"; fail=1
+    fi
+
+    TOKEN="$(cat "$HOME/.cf_api_token" 2>/dev/null || true)"
+    if [ -z "$TOKEN" ]; then
+      say "cloudflare token" "✗ ~/.cf_api_token missing (see playbook §1)"; fail=1
+    else
+      verify=$(curl -s -m 10 -H "Authorization: Bearer $TOKEN" \
+        https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -o '"status":"active"' || true)
+      if [ -n "$verify" ]; then say "cloudflare token" "✓ active"; else say "cloudflare token" "✗ invalid/expired"; fail=1; fi
+      zone=$(curl -s -m 10 -H "Authorization: Bearer $TOKEN" \
+        "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" 2>/dev/null | grep -o '"name":"'"$DOMAIN"'"' || true)
+      if [ -n "$zone" ]; then say "zone $DOMAIN" "✓ visible to token"; else say "zone $DOMAIN" "✗ not visible — token missing Zone/DNS scope?"; fail=1; fi
+    fi
+
+    if command -v gh > /dev/null && gh auth status > /dev/null 2>&1; then
+      say "github cli" "✓ authed"
+    else
+      say "github cli" "– not authed (optional: repos, portfolio builds)"
+    fi
+    command -v swift > /dev/null && say "swift toolchain" "✓ $(swift --version 2>&1 | head -1 | cut -c1-40)" || say "swift toolchain" "– absent (only needed for --swift apps)"
+    command -v node > /dev/null && say "node" "✓ $(node --version)" || say "node" "– absent (only needed to test node apps locally)"
+    [ -d "$STATUS_SITE" ] && say "status site ($STATUS_SITE)" "✓ present" || say "status site ($STATUS_SITE)" "– missing (roost status unavailable)"
+
+    if [ "$fail" -eq 0 ]; then echo; echo "✓ roost is healthy"; else echo; echo "✗ problems found — fix the ✗ lines above"; exit 1; fi
+    ;;
+  help|*)
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+esac

@@ -26,6 +26,14 @@ It creates the Dokku app and domain, scaffolds a repo from a template
 deploy, publishes the route via the Cloudflare API, and verifies LAN +
 public. The manual steps below remain as the reference for what it does.
 
+All toolbelt scripts read `~/.roostrc` (simple `KEY=VALUE` lines:
+`ROOST_DOKKU_HOST`, `ROOST_DOMAIN`, `ROOST_METRIC_APP`,
+`ROOST_STATUS_SITE`) so nothing is hardcoded to one person's host — copy
+`roostrc.example` from the repo and fill in yours. The `roost` command
+wraps everything: `roost new`, `roost route`, `roost fleet`,
+`roost backup`, `roost status`, and `roost doctor` (diagnoses SSH, token,
+tunnel, and tooling problems — run it first when anything misbehaves).
+
 ```sh
 ssh dokku@192.168.0.103 apps:create <name>
 ssh dokku@192.168.0.103 domains:set <name> <name>.jimmyhoughjr.net
@@ -213,6 +221,36 @@ Section kinds: `stats`, `banner`, `barchart`, `pie`, `table`, `cards`
 (items use `q` + `pill: {text, tone}`), `split` (uses `columns`).
 The `.tone` field drives color: `go`, `wip`, `srv`, `done`, `none`.
 
+## 7b. Fleet observability
+
+Three timescales, all part of Roost:
+
+- **pulse** (`pulse.<domain>`) — realtime: a tiny Node app with read-only
+  access to the Docker socket (`dokku docker-options:add pulse deploy
+  "-v /var/run/docker.sock:/var/run/docker.sock:ro"`), serving `/api/stats`
+  (per-container CPU%/memory from the Docker Engine API, host memory/load
+  from /proc) behind a dashboard that polls every 5 s.
+- **Fleet board** — snapshot: `roost fleet` (bin/fleet-board.py) collects
+  over the dokku@ channel — per-app running state, HTTP 200 checks through
+  nginx, process-RSS memory — and writes a statusgen board. Runs on every
+  `push-status`. Note: per-app memory is the SUM of process RSS via
+  `dokku enter <app> web ps -o rss=`; cgroup files inside `enter` sessions
+  report the exec scope, not the app.
+- **History board** — evolution: every status push, generated from git.
+
+Alerting: `roost/bin/fleet-alert.py` runs every 15 minutes via launchd and
+sends a desktop notification when an app stops serving 200 or disk/memory
+cross thresholds — state-transition based, so it alerts once per incident,
+not every 15 minutes.
+
+## 7c. Backups
+
+`roost backup` (bin/backup-roost.sh) tars each persistent storage mount
+from inside a container (the only channel is dokku@) to
+`~/Backups/roost/<name>-<date>.tgz`, keeps 14 days. Runs nightly at 04:15
+via launchd. Every site repo also has a private GitHub remote — the pi is
+never the only copy of anything.
+
 ## 8. Operational gotchas (all learned the hard way)
 
 - **Trailing slashes in links.** nginx 301s `/blog` → `http://…/blog/`
@@ -254,3 +292,4 @@ Never commit any of these; `rates.json` and other derived data are public.
 | head2head | implementation-shootout reports + community proposals | `~/head2head-site` |
 | docs | this playbook and friends, rendered from markdown | `~/docs-site` (content: `~/repos/docs`) |
 | hello | living example created by `new-app.sh` | `~/hello-site` |
+| pulse | realtime resource stats (Docker API + /proc) | `~/pulse-site` |

@@ -1,0 +1,7 @@
+# Roost toolbelt config — copy to ~/.roostrc and fill in your values.
+ROOST_DOKKU_HOST=dokku@YOUR_HOST_IP
+ROOST_DOMAIN=yourdomain.net
+# any always-on app; used to read host metrics via `dokku run`
+ROOST_METRIC_APP=someapp
+# your statusgen site checkout (for `roost status` / `roost fleet`)
+ROOST_STATUS_SITE=$HOME/status-site
