@@ -115,9 +115,11 @@ Store it where the scripts look:
 printf '%s' '<token>' > ~/.cf_api_token && chmod 600 ~/.cf_api_token
 ```
 
-Finally, edit the two constants at the top of
-`~/repos/roost/bin/new-app.sh` and `bin/publish-route.sh` — `DOKKU` (your
-host) and `DOMAIN` (your zone).
+Finally, configure the toolbelt — copy `roostrc.example` from the repo
+to `~/.roostrc` and fill in your host, domain, and status-site path. Then
+run `roost doctor` (add `~/repos/roost/bin` to your PATH) — it checks the
+SSH channel, the token, the zone, and your tooling, and tells you exactly
+what's missing.
 
 ## 5. First app — one command
 
