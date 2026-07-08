@@ -1,5 +1,7 @@
 # Roost
 
+<img src="assets/roost-mark.svg" width="96" alt="Roost — a swoosh rooster on its perch">
+
 A self-hosted app platform on one small box. One ARM SBC (or any
 Debian/Ubuntu machine), Dokku, a Cloudflare tunnel, and a toolbelt of
 scripts — serving any number of apps at `<name>.yourdomain`, deployed by

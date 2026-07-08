@@ -52,6 +52,7 @@ case "$KIND" in
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <title>${NAME}</title>
 <style>
   :root { --bg:#F7F6F2; --ink:#23211C; --muted:#6F6B62; --accent:#B4551F; }
@@ -73,6 +74,7 @@ case "$KIND" in
 </body>
 </html>
 HTML
+    cp "$BIN/../assets/favicon.svg" "$DIR/favicon.svg" 2>/dev/null || true
     ;;
   node)
     printf 'FROM node:22-alpine\nWORKDIR /app\nCOPY server.js .\nEXPOSE 80\nCMD ["node", "server.js"]\n' > "$DIR/Dockerfile"
