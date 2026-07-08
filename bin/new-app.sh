@@ -67,6 +67,7 @@ case "$KIND" in
 </head>
 <body>
 <main>
+  <svg width="72" height="72" viewBox="0 0 64 64" fill="currentColor" style="color:var(--accent)" aria-label="Roost"><path d="M19 39 C5 34 2 18 9 7 C9.5 21 14 31 24 33 Z"/><path d="M22 33 C13 29 11 19 15 11 C16 21 19 27 27 29 Z"/><ellipse cx="29" cy="33" rx="13" ry="11"/><path d="M35 17 L45 25 L36 33 L26 25 Z"/><path fill-rule="evenodd" d="M37.3 18 a5.7 5.7 0 1 0 11.4 0 a5.7 5.7 0 1 0 -11.4 0 Z M43.2 16.8 a1.4 1.4 0 1 0 2.8 0 a1.4 1.4 0 1 0 -2.8 0 Z"/><circle cx="40.5" cy="11" r="2.9"/><circle cx="45" cy="11.8" r="2.4"/><path d="M48.2 15.8 L55 18.2 L48.2 20.8 Z"/><rect x="26.6" y="42" width="2.6" height="10" rx="1.3"/><rect x="32.8" y="42" width="2.6" height="10" rx="1.3"/><rect x="7" y="50.5" width="50" height="3" rx="1.5"/></svg>
   <h1>${NAME}</h1>
   <p>Scaffolded by <code>new-app.sh</code> — edit <code>index.html</code> and <code>git push dokku main</code>.</p>
   <p style="margin-top:.75rem;font-size:.85rem"><a href="https://github.com/jhoughjr/roost" style="color:var(--accent);text-decoration:none">Powered by Roost</a></p>
