@@ -54,9 +54,11 @@ def main():
             pass
         mem_mb = ""
         if running:
-            raw = ssh("enter", app, "web", "cat", "/sys/fs/cgroup/memory.current").strip()
-            if raw.isdigit():
-                mem_mb = f"{int(raw) / 1048576:.0f} MB"
+            # sum process RSS inside the container (cgroup files reflect the
+            # exec scope, not the app — learned the hard way)
+            rss_kb = sum(int(x) for x in ssh("enter", app, "web", "ps", "-o", "rss=").split() if x.isdigit())
+            if rss_kb:
+                mem_mb = f"{rss_kb / 1024:.0f} MB"
         healthy = running and code == "200"
         if running: up += 1
         if code == "200": ok += 1
