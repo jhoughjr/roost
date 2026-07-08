@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# new-app.sh <name> [--static|--node|--swift] [--dir <path>]
+# new-app.sh <name> [--static|--node|--swift|--board] [--dir <path>]
 #
 # Nothing → live at https://<name>.jimmyhoughjr.net, one command:
 #   1. dokku app + domain
@@ -12,6 +12,7 @@
 #   --static  nginx serving index.html            (deploys in ~15 s)
 #   --node    zero-dep node http server, /health  (deploys in ~30 s)
 #   --swift   Hummingbird 2 hello, /health        (first pi build ~8 min)
+#   --board   statusgen status board              (deploys in ~15 s)
 #
 # Requires: dokku@ key auth to the pi, and ~/.cf_api_token (see publish-route.sh).
 set -euo pipefail
@@ -23,14 +24,14 @@ BIN="$(cd "$(dirname "$0")" && pwd)"
 NAME="" KIND="static" DIR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --static|--node|--swift) KIND="${1#--}" ;;
+    --static|--node|--swift|--board) KIND="${1#--}" ;;
     --dir) DIR="$2"; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) NAME="$1" ;;
   esac
   shift
 done
-[[ -n "$NAME" ]] || { echo "usage: new-app.sh <name> [--static|--node|--swift]" >&2; exit 1; }
+[[ -n "$NAME" ]] || { echo "usage: new-app.sh <name> [--static|--node|--swift|--board]" >&2; exit 1; }
 [[ "$NAME" =~ ^[a-z0-9-]{1,32}$ ]] || { echo "error: name must be [a-z0-9-]" >&2; exit 1; }
 DIR="${DIR:-$HOME/${NAME}-site}"
 [[ -e "$DIR" ]] && { echo "error: $DIR already exists" >&2; exit 1; }
@@ -137,6 +138,55 @@ DOCKER
       (cd "$DIR" && swift build 2>&1 | tail -2)
     fi
     ;;
+  board)
+    printf 'FROM nginx:alpine\nCOPY . /usr/share/nginx/html\n' > "$DIR/Dockerfile"
+    printf '.git\n_assets/\n' > "$DIR/.dockerignore"
+    mkdir -p "$DIR/_assets"
+    # TODO: copy board.js and board.css from statusgen repo
+    # For now, this template scaffolds the structure; see playbook §7
+    cat > "$DIR/board.json" <<'JSON'
+{
+  "title": "${NAME}",
+  "eyebrow": "${FQDN}",
+  "stamp": "Updated $(date +'%Y-%m-%d') — edit board.json to add your status sections",
+  "sections": [
+    {
+      "kind": "stats",
+      "items": [
+        { "n": "1", "label": "Status board", "tone": "go" },
+        { "n": "0", "label": "Issues blocking", "tone": "go" }
+      ]
+    },
+    {
+      "kind": "banner",
+      "tone": "none",
+      "text": "Welcome to your statusgen board. Edit <code>board.json</code> to add sections: stats, cards, tables, charts. See <a href=\"https://github.com/jhoughjr/statusgen/blob/main/BOARD_SCHEMA.md\">BOARD_SCHEMA.md</a> for the data model. Deploy with <code>git push dokku main</code>."
+    }
+  ]
+}
+JSON
+    cat > "$DIR/index.html" <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PLACEHOLDER</title>
+  <!-- TODO: update board.css + board.js paths to match your setup (e.g., from statusgen repo or a CDN) -->
+  <!-- For now, see playbook §7 for full setup steps. -->
+  <link rel="stylesheet" href="/_assets/board.css" />
+</head>
+<body>
+  <div class="wrap" id="board-root">
+    <p class="board-loading">Loading board…</p>
+  </div>
+
+  <script>window.BOARD_SRC = "board.json";</script>
+  <script src="/_assets/board.js"></script>
+</body>
+</html>
+HTML
+    ;;
 esac
 
 echo "==> first deploy"
@@ -168,5 +218,14 @@ cat <<EOF
   next:    persistent data → dokku storage:mount (playbook §3)
            cron            → app.json (playbook §4)
            accounts        → add origin to vault ALLOWED_ORIGINS (playbook §6)
-           status board    → statusgen new-board.sh (playbook §7)
 EOF
+if [[ "$KIND" != "board" ]]; then
+  cat <<EOF2
+           status board    → statusgen new-board.sh (playbook §7)
+EOF2
+else
+  cat <<EOF2
+           board setup     → copy _assets/{board.js,board.css} from statusgen (playbook §7)
+           then edit       → board.json to add your sections + git push dokku main
+EOF2
+fi

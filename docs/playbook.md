@@ -136,22 +136,82 @@ and storage with zero app-side auth code:
 The session cookie is set on `.jimmyhoughjr.net`, so one login covers
 every app.
 
-## 7. Status board
+## 7. Status boards — the blessed component
+
+**statusgen** is Roost's supported status-board solution: a standalone
+generator (GitHub jhoughjr/statusgen) that turns a `board.json` data
+model into a rendered HTML board with client-side charts, cards, and
+tables. Every Roost app can have a status board; status-site
+(status.jimmyhoughjr.net) is the hub that hosts multiple boards and
+their history.
+
+**When to use:** Document a service's state (metrics, features, operations
+blockers, team progress) as a living status board. The board.json schema
+is simple — stats, banners, cards, tables, charts — and renders client-side
+with no build step. Update flows are git-native: edit board.json, commit,
+push dokku main.
+
+### Standalone statusgen board (any Roost app)
+
+Create a new repo that runs statusgen as its deployed service:
 
 ```sh
-~/repos/statusgen/bin/new-board.sh ~/status-site <slug> "Title" "Hub description"
-# edit ~/status-site/<slug>/board.json (schema: statusgen/BOARD_SCHEMA.md)
-cd ~/status-site && git add -A && git commit && git push dokku main
+~/repos/roost/bin/new-app.sh myapp --board
 ```
 
+This scaffolds a minimal statusgen board app with:
+- `board.json` (starter template, edit to your metrics)
+- `index.html` (loads the shared statusgen renderer from cdn)
+- nginx Dockerfile (serve static assets)
+
+Then:
+
+```sh
+cd ~/myapp-site
+# edit board.json to add sections: stats, cards, tables, charts, etc.
+# (schema: github.com/jhoughjr/statusgen/BOARD_SCHEMA.md)
+git push dokku main
+```
+
+Deploy pushes at `https://myapp.jimmyhoughjr.net/`, and the board renders
+live from `board.json`. No build dependencies; no versioning overhead.
+
+### Multi-board hub (status-site example)
+
+For multiple boards under one domain, clone status-site (which holds
+the hub router + individual board repos as subdirs). Each subdir is a
+`board.json` + `index.html` pair:
+
+```sh
+git clone dokku@192.168.0.103:status ~/status-site-local
+cd ~/status-site-local
+~/repos/statusgen/bin/new-board.sh . slug "Title" "Description"
+# creates ./slug/{board.json,index.html}
+```
+
+### Updates and history
+
+**For a single board:** edit `board.json` and `git push dokku main`.
+
+**For status-site (multi-board with history tracking):** the hub runs
+`push-status.sh` to regenerate the History board (every past push from
+git history), commit, and deploy:
+
+```sh
+cd ~/status-site
+# edit any board.json
+~/status-site/push-status.sh "what changed"
+```
+
+The older `update-status.sh` (raw-HTML era) is legacy; don't use it for
+new boards.
+
+### Board schema
+
+The `board.json` data model lives in statusgen's BOARD_SCHEMA.md.
 Section kinds: `stats`, `banner`, `barchart`, `pie`, `table`, `cards`
 (items use `q` + `pill: {text, tone}`), `split` (uses `columns`).
-
-**Canonical update flow:** edit any `board.json`, then run
-`~/status-site/push-status.sh "message"` — it regenerates the History
-board (every past status push, from git), refreshes the Claude usage
-ledger on the docs site, commits, and deploys. The older
-`update-status.sh` (raw-HTML era) is legacy; don't use it for boards.
+The `.tone` field drives color: `go`, `wip`, `srv`, `done`, `none`.
 
 ## 8. Operational gotchas (all learned the hard way)
 
