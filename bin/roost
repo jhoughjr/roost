@@ -6,6 +6,11 @@
 #   roost fleet                                  refresh the fleet board json
 #   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
+#   roost apps                                   list deployed apps
+#   roost ps [app]                               container status
+#   roost logs <app> [-n N]                      tail app logs (default 200)
+#   roost restart <app>                          restart an app
+#   roost config <app> [KEY=VAL ...]             show or set app config
 #   roost doctor                                 diagnose the setup
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
@@ -21,6 +26,19 @@ case "$cmd" in
   fleet)  exec "$BIN/fleet-board.py" "$@" ;;
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
   status) exec "$STATUS_SITE/push-status.sh" "$@" ;;
+  apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
+  ps)     exec ssh -o BatchMode=yes "$DOKKU" ps:report "$@" ;;
+  logs)
+    app="${1:?usage: roost logs <app> [-n N]}"; shift || true
+    n=200; [ "${1:-}" = "-n" ] && n="${2:-200}"
+    exec ssh -o BatchMode=yes "$DOKKU" logs "$app" -n "$n"
+    ;;
+  restart) exec ssh -o BatchMode=yes "$DOKKU" ps:restart "${1:?usage: roost restart <app>}" ;;
+  config)
+    app="${1:?usage: roost config <app> [KEY=VALUE ...]}"; shift || true
+    if [ $# -gt 0 ]; then exec ssh -o BatchMode=yes "$DOKKU" config:set "$app" "$@"
+    else exec ssh -o BatchMode=yes "$DOKKU" config:show "$app"; fi
+    ;;
   doctor)
     fail=0
     say() { printf "%-38s %s\n" "$1" "$2"; }
@@ -56,6 +74,6 @@ case "$cmd" in
     if [ "$fail" -eq 0 ]; then echo; echo "✓ roost is healthy"; else echo; echo "✗ problems found — fix the ✗ lines above"; exit 1; fi
     ;;
   help|*)
-    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac
