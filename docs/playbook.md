@@ -129,7 +129,7 @@ copy first and falls back to the deploy-baked file.
 
 ## 6. Accounts & user data — vault
 
-vault.jimmyhoughjr.net gives every subdomain app sign-in (Apple/Google)
+vault.jimmyhoughjr.net gives every subdomain app sign-in (GitHub/Google/Apple)
 and storage with zero app-side auth code:
 
 1. Add the app's origin to vault's `ALLOWED_ORIGINS` (config:set).
