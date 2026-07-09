@@ -81,6 +81,15 @@ case "$cmd" in
     if [ "$fail" -eq 0 ]; then echo; echo "✓ roost is healthy"; else echo; echo "✗ problems found — fix the ✗ lines above"; exit 1; fi
     ;;
   help|*)
-    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+    if [ -t 1 ]; then R=$'\033[31m' Y=$'\033[33m' B=$'\033[1m' D=$'\033[2m' X=$'\033[0m'; else R= Y= B= D= X=; fi
+    printf '%s\n' \
+      "   ${R},,,${X}" \
+      "   (o${Y}>${X}        ${B}r o o s t${X}" \
+      "\\\\_//)        ${D}one command for the whole platform.${X}" \
+      " \\_/_)" \
+      "  _|_" \
+      "═════════"
+    echo
+    sed -n '4,15p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac
