@@ -133,6 +133,24 @@ def main():
             {"kind": "cards", "title": "Apps", "count": f"{len(apps)} deployed", "items": rows},
         ],
     }
+    # Roost TODOs: render "- item -- detail" lines from TODO.md (repo root) as a
+    # board section, so operational reminders live in git and survive regeneration.
+    todo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "TODO.md")
+    if os.path.exists(todo_path):
+        items = []
+        for line in open(todo_path):
+            line = line.strip()
+            if line.startswith("- "):
+                text = line[2:].strip()
+                q, _, note = text.partition(" -- ")
+                items.append({"q": q.strip(), "note": note.strip()})
+        if items:
+            board["sections"].append({
+                "kind": "cards", "title": "Roost TODOs",
+                "count": f"{len(items)} open",
+                "desc": "from roost/TODO.md — delete lines there when done",
+                "items": items,
+            })
     os.makedirs(os.path.dirname(out), exist_ok=True)
     json.dump(board, open(out, "w"), indent=2, ensure_ascii=False)
     print(f"fleet: {up}/{len(apps)} running, {ok}/{len(apps)} http-ok, mem {mem_pct}, disk {disk_pct}, load {load}")
