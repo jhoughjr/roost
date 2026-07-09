@@ -4,6 +4,7 @@
 #   roost new <name> [--static|--node|--swift]   nothing → live app
 #   roost route <subdomain>                      publish a tunnel route
 #   roost fleet                                  refresh the fleet board json
+#   roost stats                                  run configured board-stat collectors
 #   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
 #   roost apps                                   list deployed apps
@@ -24,6 +25,12 @@ case "$cmd" in
   new)    exec "$BIN/new-app.sh" "$@" ;;
   route)  exec "$BIN/publish-route.sh" "$@" ;;
   fleet)  exec "$BIN/fleet-board.py" "$@" ;;
+  stats)
+    SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
+    [ -d "$SGEN/bin/collect" ] || { echo "roost stats: statusgen not found at $SGEN (set ROOST_STATUSGEN)"; exit 1; }
+    python3 "$SGEN/bin/collect/repo_stats.py" || echo "note: repo stats failed (non-fatal)"
+    python3 "$SGEN/bin/collect/ci_status.py" || echo "note: ci status failed (non-fatal)"
+    ;;
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
   status) exec "$STATUS_SITE/push-status.sh" "$@" ;;
   apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
@@ -74,6 +81,6 @@ case "$cmd" in
     if [ "$fail" -eq 0 ]; then echo; echo "✓ roost is healthy"; else echo; echo "✗ problems found — fix the ✗ lines above"; exit 1; fi
     ;;
   help|*)
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac

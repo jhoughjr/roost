@@ -5,3 +5,11 @@ ROOST_DOMAIN=yourdomain.net
 ROOST_METRIC_APP=someapp
 # your statusgen site checkout (for `roost status` / `roost fleet`)
 ROOST_STATUS_SITE=$HOME/status-site
+# board-stat collectors (roost stats / push-status) — optional; skip if unset
+# ROOST_STATUSGEN=$HOME/repos/statusgen
+# ROOST_CI_BOARD=someboard
+# ROOST_CI_REPOS=owner/repo:Label:4,owner/other:Other:3
+# ROOST_STATS_BOARD=someboard
+# ROOST_STATS_REPO=$HOME/repos/yourapp
+# ROOST_STATS_TEST_CMD=npx vitest run
+# ROOST_STATS_LABEL=YourApp
