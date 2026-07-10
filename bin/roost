@@ -13,7 +13,7 @@
 #   roost restart <app>                          restart an app
 #   roost config <app> [KEY=VAL ...]             show or set app config
 #   roost doctor                                 diagnose the setup
-#   roost ui                                     full-screen terminal (transcript, playbook, tab-complete)
+#   roost ui                                     full-screen terminal (console, monitor, config, docs tabs)
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
