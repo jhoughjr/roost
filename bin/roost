@@ -31,6 +31,7 @@ case "$cmd" in
     [ -d "$SGEN/bin/collect" ] || { echo "roost stats: statusgen not found at $SGEN (set ROOST_STATUSGEN)"; exit 1; }
     python3 "$SGEN/bin/collect/repo_stats.py" || echo "note: repo stats failed (non-fatal)"
     python3 "$SGEN/bin/collect/ci_status.py" || echo "note: ci status failed (non-fatal)"
+    python3 "$SGEN/bin/collect/shipped_week.py" || echo "note: shipped-week failed (non-fatal)"
     ;;
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
   status) exec "$STATUS_SITE/push-status.sh" "$@" ;;
