@@ -11,7 +11,7 @@ shift+tab cycles tabs from anywhere; on tabs 2-4 the digits 1-4 jump
 straight to a tab and q returns to the console. Stdlib only.
 
 Usage: roost ui   (or: python3 bin/roost-ui.py)
-Keys:  tab complete · up/down history · pgup/pgdn scroll · ctrl+c cancel · ctrl+d quit
+Keys:  tab/wheel click tabs · up/down history · pgup/pgdn scroll · ctrl+c cancel · ctrl+d quit
 """
 import curses
 import json
@@ -25,6 +25,10 @@ import sys
 import threading
 import time
 import urllib.request
+
+# Mouse button constants
+BUTTON4_PRESSED = curses.BUTTON4_PRESSED
+BUTTON5_PRESSED = getattr(curses, "BUTTON5_PRESSED", 0x2000000)
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(BIN)
@@ -382,6 +386,7 @@ class UI:
         self.cfg_masked = True
         self.doc_sel = 0
         self.docview = None
+        self.tab_spans = []           # [(x_start, x_end, tab_index), ...]
         threading.Thread(target=self._fetch_apps, daemon=True).start()
 
     def _fetch_apps(self):
@@ -452,6 +457,17 @@ class UI:
                 self.doc_sel = i
         self.docview = DocView(os.path.relpath(path, ROOT), text)
         self.tab = 3
+
+    def open_doc_by_index(self, idx):
+        """Open a doc by its index in DOCS list."""
+        if 0 <= idx < len(DOCS):
+            name, path, _ = DOCS[idx]
+            self.doc_sel = idx
+            try:
+                text = open(path, encoding="utf-8").read()
+            except OSError as e:
+                text = f"cannot read {path}: {e}"
+            self.docview = DocView(os.path.relpath(path, ROOT), text)
 
     # ---- command handling -------------------------------------------
     def submit(self):
@@ -711,11 +727,13 @@ class UI:
         put(scr, 0, 0, " (o> ", attr("r"))
         x = 6
         frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self.tab_spans = []
         for i, name in enumerate(TABS):
             label = f" {i + 1} {name} "
             if i == 0 and self.runner.running:
                 label = f" 1 {name} {frames[self.spin % len(frames)]} "
             a = curses.A_REVERSE if i == self.tab else attr("d")
+            self.tab_spans.append((x, x + len(label), i))
             put(scr, 0, x, label, a)
             x += len(label) + 1
         right = f"{DOKKU} · {DOMAIN} "
@@ -755,8 +773,8 @@ class UI:
             elif self.scroll:
                 s = f" ── scrolled up {self.scroll} · pgdn to follow"
             else:
-                s = (" tab complete · up/down history · pgup/pgdn scroll"
-                     " · shift+tab tabs · help · quit")
+                s = (" tab complete · up/down history · pgup/pgdn/wheel scroll"
+                     " · click/shift+tab tabs · help · quit")
             put(scr, self.h - 2, 0, s, attr("d"))
             put(scr, self.h - 1, 0, " ❯ ", attr("p"))
             avail = max(1, self.w - 6)
@@ -853,14 +871,63 @@ class UI:
             elif ch in (curses.KEY_DOWN, "j"):
                 self.doc_sel = min(len(DOCS) - 1, self.doc_sel + 1)
             elif ch in ("\n", "\r", curses.KEY_ENTER):
-                name, path, _ = DOCS[self.doc_sel]
-                try:
-                    text = open(path, encoding="utf-8").read()
-                except OSError as e:
-                    text = f"cannot read {path}: {e}"
-                self.docview = DocView(os.path.relpath(path, ROOT), text)
+                self.open_doc_by_index(self.doc_sel)
 
     def handle(self, ch):
+        # Handle mouse events at the top, before anything else
+        if ch == curses.KEY_MOUSE:
+            try:
+                _mouse_id, mx, my, _z, bstate = curses.getmouse()
+            except curses.error:
+                return
+            # Wheel up: scroll active view up by 3
+            if bstate & BUTTON4_PRESSED:
+                if self.tab == 0:
+                    self.scroll += 3
+                elif self.tab == 1:
+                    self.mon_scroll += 3
+                elif self.tab == 2:
+                    self.cfg_scroll += 3
+                elif self.tab == 3 and self.docview:
+                    self.docview.top -= 3
+                elif self.tab == 3:
+                    self.doc_sel = max(0, self.doc_sel - 1)
+                return
+            # Wheel down: scroll active view down by 3
+            if bstate & BUTTON5_PRESSED:
+                if self.tab == 0:
+                    self.scroll = max(0, self.scroll - 3)
+                elif self.tab == 1:
+                    self.mon_scroll = max(0, self.mon_scroll - 3)
+                elif self.tab == 2:
+                    self.cfg_scroll = max(0, self.cfg_scroll - 3)
+                elif self.tab == 3 and self.docview:
+                    self.docview.top += 3
+                elif self.tab == 3:
+                    self.doc_sel = min(len(DOCS) - 1, self.doc_sel + 1)
+                return
+            # Left click: handle tab switching or doc selection
+            if bstate & curses.BUTTON1_PRESSED:
+                # Click on tab row (row 0)
+                if my == 0:
+                    for x_start, x_end, tab_idx in self.tab_spans:
+                        if x_start <= mx < x_end:
+                            self.tab = tab_idx
+                            if self.tab == 1:
+                                self.stats.refresh()
+                            return
+                # Click on doc list (tab 3, rows 4+, no docview open)
+                if self.tab == 3 and not self.docview and my >= 4:
+                    doc_idx = my - 4
+                    if doc_idx < len(DOCS):
+                        prev_sel = self.doc_sel
+                        self.doc_sel = doc_idx
+                        # If clicking the already-selected doc, open it
+                        if doc_idx == prev_sel:
+                            self.open_doc_by_index(self.doc_sel)
+                return
+            return
+
         if ch == curses.KEY_BTAB:                # shift+tab cycles tabs
             self.tab = (self.tab + 1) % len(TABS)
             if self.tab == 1:
@@ -940,6 +1007,9 @@ class UI:
         curses.raw()
         self.scr.keypad(True)
         self.scr.timeout(90)
+        # Enable mouse support
+        curses.mouseinterval(0)
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
         self.welcome()
         while not self.done:
             self.drain()
@@ -958,7 +1028,15 @@ def main(scr):
         curses.curs_set(1)
     except curses.error:
         pass
-    UI(scr).run()
+    # Enable xterm mouse reporting for wheel events and better tracking
+    sys.stdout.write("\x1b[?1002h\x1b[?1006h")
+    sys.stdout.flush()
+    try:
+        UI(scr).run()
+    finally:
+        # Restore terminal to normal mouse mode
+        sys.stdout.write("\x1b[?1002l\x1b[?1006l")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
