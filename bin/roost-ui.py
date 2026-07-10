@@ -54,11 +54,12 @@ DOMAIN = RC.get("ROOST_DOMAIN", "jimmyhoughjr.net")
 PULSE = RC.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net")
 
 PASSTHROUGH = ["apps", "ps", "logs", "restart", "config", "status",
-               "fleet", "stats", "doctor", "backup", "new", "route"]
+               "fleet", "stats", "doctor", "backup", "new", "route", "db"]
 INTERNAL = ["playbook", "start", "todo", "help", "clear", "quit",
             "monitor", "docs"]
 ALL_CMDS = sorted(set(PASSTHROUGH + INTERNAL))
 APP_ARG = {"ps", "logs", "restart", "config"}
+DB_SUBS = ["create", "list", "info", "psql", "export", "import", "link", "unlink"]
 
 TABS = ["console", "monitor", "config", "docs"]
 SECRET_HINTS = ("KEY", "TOKEN", "SECRET", "PASS", "PWD")
@@ -70,6 +71,7 @@ HELP = [
     ("", "  logs <app> [-n N]        tail app logs (default 200)"),
     ("", "  restart <app>            restart an app"),
     ("", "  config <app> [K=V ...]   show or set app config"),
+    ("", "  db <sub> [...]           postgres nest: create <app> · list · info · export"),
     ("", "  status [\"message\"]       push the status site (fleet+history+ledger)"),
     ("", "  fleet                    refresh the fleet board json"),
     ("", "  stats                    run configured board-stat collectors"),
@@ -148,6 +150,15 @@ def human_age(s):
 
 def mask_val(v):
     return "•" * min(max(len(v), 3), 10)
+
+
+def is_secret(k, v=""):
+    """Check if key k should be masked as a secret, with optional value check."""
+    if any(t in k.upper() for t in SECRET_HINTS):
+        return True
+    if k.upper().endswith("_URL") and "://" in v and "@" in v:
+        return True
+    return False
 
 
 class Runner:
@@ -372,6 +383,7 @@ class UI:
         self.runner = Runner()
         self.stats = Stats(PULSE)
         self.apps = []
+        self.dbs = None
         self.spin = 0
         self.done = False
         self.mon_scroll = 0
@@ -383,6 +395,7 @@ class UI:
         self.doc_sel = 0
         self.docview = None
         threading.Thread(target=self._fetch_apps, daemon=True).start()
+        threading.Thread(target=self._fetch_dbs, daemon=True).start()
 
     def _fetch_apps(self):
         try:
@@ -393,6 +406,28 @@ class UI:
             if r.returncode == 0:
                 self.apps = [a.strip() for a in r.stdout.splitlines()
                              if a.strip() and not a.startswith("=")]
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def _fetch_dbs(self):
+        try:
+            r = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6",
+                 DOKKU, "postgres:list"],
+                capture_output=True, text=True, timeout=20)
+            if r.returncode == 0:
+                dbs = []
+                for line in r.stdout.splitlines():
+                    s = line.strip()
+                    if not s or s.startswith("NAME") or s.startswith("=====") or s.startswith("!"):
+                        continue
+                    parts = s.split()
+                    if parts:
+                        name = parts[0]
+                        status = parts[2] if len(parts) > 2 else "?"
+                        rest = " ".join(parts[1:2] + parts[3:])
+                        dbs.append({"name": name, "status": status, "rest": rest})
+                self.dbs = dbs
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -510,6 +545,24 @@ class UI:
         elif parts[0] in APP_ARG and len(parts) == 2:
             cands = sorted(a for a in self.app_names() if a.startswith(parts[-1]))
             add_space = False
+        elif parts[0] == "db":
+            if len(parts) == 2:
+                cands = [c for c in DB_SUBS if c.startswith(parts[-1])]
+                add_space = True
+            elif len(parts) == 3 and parts[1] == "create":
+                cands = sorted(a for a in self.app_names() if a.startswith(parts[-1]))
+                add_space = False
+            elif len(parts) == 3 and parts[1] in ("info", "psql", "export", "import", "link", "unlink"):
+                if self.dbs:
+                    cands = sorted(db["name"] for db in self.dbs if db["name"].startswith(parts[-1]))
+                else:
+                    cands = sorted(a + "-db" for a in self.app_names() if (a + "-db").startswith(parts[-1]))
+                add_space = False
+            elif len(parts) == 4 and parts[1] in ("link", "unlink"):
+                cands = sorted(a for a in self.app_names() if a.startswith(parts[-1]))
+                add_space = False
+            else:
+                return
         else:
             return
         if not cands:
@@ -613,6 +666,18 @@ class UI:
         if total_w:
             L.append(("d", f"  ~{total_w:.1f} W estimated across live nodes"
                            " (pi wall watts not measured)"))
+        L.append(("", ""))
+        L.append(("b", "nest (postgres)"))
+        if self.dbs is None:
+            L.append(("d", "  plugin not installed — playbook §3b has the one-liner"))
+        elif not self.dbs:
+            L.append(("d", "  no services — roost db create <app>"))
+        else:
+            dbw = max([len(db["name"]) for db in self.dbs] + [4])
+            for db in sorted(self.dbs, key=lambda x: x["name"]):
+                ok = "running" in db["status"]
+                L.append(("" if ok else "e",
+                          f"  {db['name']:<{dbw}}  {db['status']:<9} {db['rest']}"))
         return L
 
     # ---- config tab ---------------------------------------------------
@@ -628,9 +693,11 @@ class UI:
                     L.append(("d", "  " + raw))
                 elif "=" in s:
                     k, v = s.split("=", 1)
-                    secret = any(t in k.upper() for t in SECRET_HINTS)
-                    shown = mask_val(v) if secret and self.cfg_masked else v
-                    L.append(("", f"  {k.strip()} = {shown}"))
+                    k_strip = k.strip()
+                    v_strip = v.strip()
+                    secret = is_secret(k_strip, v_strip)
+                    shown = mask_val(v_strip) if secret and self.cfg_masked else v_strip
+                    L.append(("", f"  {k_strip} = {shown}"))
                 else:
                     L.append(("", "  " + raw))
         except OSError:
@@ -666,7 +733,10 @@ class UI:
             for a, ln in self.cfg_lines:
                 if self.cfg_masked and ":" in ln and not a:
                     k, v = ln.split(":", 1)
-                    ln = f"{k}: {mask_val(v.strip())}"
+                    k_strip = k.strip()
+                    v_strip = v.strip()
+                    if is_secret(k_strip, v_strip):
+                        ln = f"{k}: {mask_val(v_strip)}"
                 L.append((a, "  " + ln))
         return L
 
@@ -815,6 +885,7 @@ class UI:
         if self.tab == 1:
             if ch == "r":
                 self.stats.refresh()
+                threading.Thread(target=self._fetch_dbs, daemon=True).start()
             elif ch in (curses.KEY_UP, "k"):
                 self.mon_scroll += 1
             elif ch in (curses.KEY_DOWN, "j"):
