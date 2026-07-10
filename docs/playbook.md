@@ -243,6 +243,14 @@ sends a desktop notification when an app stops serving 200 or disk/memory
 cross thresholds — state-transition based, so it alerts once per incident,
 not every 15 minutes.
 
+**Off-box nodes** (the CI Mac mini, a workstation): `roost/bin/node-report.sh`
+POSTs the Mac's load/memory/power-model to pulse's `/api/nodes` with the
+shared key in `~/.roost_node_key` (must match `dokku config pulse NODE_KEY`);
+`install-node-report.sh` wires it to launchd every 30 s. pulse serves the
+last report per node (with age) in `/api/stats`, and
+watts.jimmyhoughjr.net/roost/ renders the whole fleet's live power draw and
+cost — nodes quiet for 2+ minutes count as asleep at ≈0 W.
+
 ## 7c. Backups
 
 `roost backup` (bin/backup-roost.sh) tars each persistent storage mount
@@ -278,6 +286,7 @@ never the only copy of anything.
 | GitHub build token | `dokku docker-options blog` build-arg | portfolio build-time API calls | github.com/settings/tokens, re-add docker-option |
 | vault SESSION_SECRET | `dokku config vault` | session cookie HMAC | `config:set` new random hex (logs everyone out) |
 | vault OAuth creds (pending) | `dokku config vault` | Apple/Google sign-in | provider consoles |
+| pulse NODE_KEY | `~/.roost_node_key` (600, per node) + `dokku config pulse NODE_KEY` | node-report.sh → pulse `/api/nodes` | `config:set` new random hex, update each node's file |
 
 Never commit any of these; `rates.json` and other derived data are public.
 
