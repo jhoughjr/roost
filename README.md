@@ -25,6 +25,7 @@ bin/new-app.sh myapp --static      # or --node, or --swift (Hummingbird 2)
 | [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, and every gotcha learned the hard way |
 | [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify |
 | [bin/publish-route.sh](bin/publish-route.sh) | Publish a subdomain through the Cloudflare tunnel via API — no dashboard |
+| [bin/roost-ui.py](bin/roost-ui.py) | `roost ui` — full-screen terminal: prompt + transcript, streaming commands, playbook pager, tab-complete (stdlib only) |
 
 Rendered docs: [docs.jimmyhoughjr.net](https://docs.jimmyhoughjr.net)
 

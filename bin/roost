@@ -13,6 +13,7 @@
 #   roost restart <app>                          restart an app
 #   roost config <app> [KEY=VAL ...]             show or set app config
 #   roost doctor                                 diagnose the setup
+#   roost ui                                     full-screen terminal (transcript, playbook, tab-complete)
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
@@ -46,6 +47,7 @@ case "$cmd" in
     if [ $# -gt 0 ]; then exec ssh -o BatchMode=yes "$DOKKU" config:set "$app" "$@"
     else exec ssh -o BatchMode=yes "$DOKKU" config:show "$app"; fi
     ;;
+  ui)     exec python3 "$BIN/roost-ui.py" "$@" ;;
   doctor)
     fail=0
     say() { printf "%-38s %s\n" "$1" "$2"; }
@@ -90,6 +92,6 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,16p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac
