@@ -106,6 +106,43 @@ ssh dokku@192.168.0.103 ps:restart <name>      # mounts apply on (re)start
 Verify the mount took: `storage:report <name>` — the first attempt has
 silently failed before.
 
+## 3b. Databases — the nest (Postgres + jsonb)
+
+Storage mounts hold flat files; when an app outgrows them (queries,
+concurrent writers, real schemas) it gets a Postgres service. Document
+data goes in `jsonb` columns — same shove-JSON-in ergonomics as a
+document store, but with SQL, indexes (`GIN`), and first-class drivers
+everywhere we work (PostgresNIO for Swift, `pg` for Node).
+
+One-time plugin install — the only step that needs root on the pi
+(the dokku@ channel can't do it):
+
+```sh
+sudo dokku plugin:install https://github.com/dokku/dokku-postgres.git --name postgres
+```
+
+Then per app, from any workstation:
+
+```sh
+roost db create <app>       # creates service <app>-db and links it
+```
+
+Linking injects `DATABASE_URL` into the app's env and restarts it. One
+service per app — Postgres idles at a few tens of MB, and the isolation
+is real (separate container, separate credentials). Everything else:
+
+```sh
+roost db list               # all services + status
+roost db info <app>-db      # connection info, container, volume
+roost db psql <app>-db      # interactive psql
+roost db export <app>-db > f.dump    # pg_dump custom format
+roost db import <app>-db < f.dump
+```
+
+`roost backup` exports every service nightly alongside the storage-mount
+tars — a live data-dir tar is *not* crash-consistent, `postgres:export`
+is. `roost doctor` reports whether the plugin is installed.
+
 ## 4. Scheduled jobs
 
 `app.json` in the repo root; the command runs in a fresh container from
@@ -255,9 +292,10 @@ cost — nodes quiet for 2+ minutes count as asleep at ≈0 W.
 
 `roost backup` (bin/backup-roost.sh) tars each persistent storage mount
 from inside a container (the only channel is dokku@) to
-`~/Backups/roost/<name>-<date>.tgz`, keeps 14 days. Runs nightly at 04:15
-via launchd. Every site repo also has a private GitHub remote — the pi is
-never the only copy of anything.
+`~/Backups/roost/<name>-<date>.tgz`, and exports each Postgres service
+(§3b) to `pg-<service>-<date>.dump`, keeps 14 days. Runs nightly at
+04:15 via launchd. Every site repo also has a private GitHub remote —
+the pi is never the only copy of anything.
 
 ## 8. Operational gotchas (all learned the hard way)
 

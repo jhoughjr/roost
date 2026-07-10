@@ -21,5 +21,15 @@ backup() {  # backup <label> <app> <path-in-container>
 backup vault-data  vault /data
 backup watts-rates watts /usr/share/nginx/html/data
 
+# postgres services: crash-consistent pg_dump via the plugin (skipped if absent)
+for svc in $(ssh -o BatchMode=yes "$DOKKU" postgres:list 2>/dev/null | awk 'NR>1 {print $1}'); do
+  out="$DEST/pg-$svc-$STAMP.dump"
+  if ssh -o BatchMode=yes "$DOKKU" postgres:export "$svc" > "$out" 2>/dev/null && [ -s "$out" ]; then
+    echo "✓ pg:$svc → $out ($(du -h "$out" | cut -f1))"
+  else
+    rm -f "$out"; echo "✗ pg:$svc FAILED"
+  fi
+done
+
 # retention: 14 days
-find "$DEST" -name '*.tgz' -mtime +14 -delete
+find "$DEST" \( -name '*.tgz' -o -name '*.dump' \) -mtime +14 -delete

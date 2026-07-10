@@ -12,6 +12,7 @@
 #   roost logs <app> [-n N]                      tail app logs (default 200)
 #   roost restart <app>                          restart an app
 #   roost config <app> [KEY=VAL ...]             show or set app config
+#   roost db create <app> | list | info | psql | export | import | link | unlink
 #   roost doctor                                 diagnose the setup
 #   roost ui                                     full-screen terminal (console, monitor, config, docs tabs)
 set -euo pipefail
@@ -48,6 +49,26 @@ case "$cmd" in
     if [ $# -gt 0 ]; then exec ssh -o BatchMode=yes "$DOKKU" config:set "$app" "$@"
     else exec ssh -o BatchMode=yes "$DOKKU" config:show "$app"; fi
     ;;
+  db)
+    sub="${1:-list}"; shift || true
+    case "$sub" in
+      create)
+        app="${1:?usage: roost db create <app>}"
+        ssh -o BatchMode=yes "$DOKKU" postgres:create "$app-db"
+        exec ssh -o BatchMode=yes "$DOKKU" postgres:link "$app-db" "$app"
+        ;;
+      psql)  exec ssh -t -o BatchMode=yes "$DOKKU" postgres:connect "${1:?usage: roost db psql <service>}" ;;
+      list)  exec ssh -o BatchMode=yes "$DOKKU" postgres:list ;;
+      info|export|import|link|unlink)
+        exec ssh -o BatchMode=yes "$DOKKU" "postgres:$sub" "$@" ;;
+      *)
+        echo "usage: roost db create <app>            new <app>-db service, linked (DATABASE_URL)"
+        echo "       roost db list | info <svc> | psql <svc>"
+        echo "       roost db export <svc> > f.dump | import <svc> < f.dump"
+        echo "       roost db link <svc> <app> | unlink <svc> <app>"
+        exit 1 ;;
+    esac
+    ;;
   ui)     exec python3 "$BIN/roost-ui.py" "$@" ;;
   doctor)
     fail=0
@@ -58,6 +79,12 @@ case "$cmd" in
       say "dokku ssh ($DOKKU)" "✓ ok"
     else
       say "dokku ssh ($DOKKU)" "✗ FAILED — key not added? (dokku ssh-keys:add)"; fail=1
+    fi
+
+    if ssh -o BatchMode=yes -o ConnectTimeout=8 "$DOKKU" postgres:list > /dev/null 2>&1; then
+      say "postgres plugin" "✓ installed"
+    else
+      say "postgres plugin" "– absent (roost db unavailable; install one-liner in playbook §3b)"
     fi
 
     TOKEN="$(cat "$HOME/.cf_api_token" 2>/dev/null || true)"
@@ -93,6 +120,6 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,16p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac

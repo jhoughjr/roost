@@ -54,7 +54,7 @@ DOMAIN = RC.get("ROOST_DOMAIN", "jimmyhoughjr.net")
 PULSE = RC.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net")
 
 PASSTHROUGH = ["apps", "ps", "logs", "restart", "config", "status",
-               "fleet", "stats", "doctor", "backup", "new", "route"]
+               "fleet", "stats", "doctor", "backup", "new", "route", "db"]
 INTERNAL = ["playbook", "start", "todo", "help", "clear", "quit",
             "monitor", "docs"]
 ALL_CMDS = sorted(set(PASSTHROUGH + INTERNAL))
@@ -70,6 +70,7 @@ HELP = [
     ("", "  logs <app> [-n N]        tail app logs (default 200)"),
     ("", "  restart <app>            restart an app"),
     ("", "  config <app> [K=V ...]   show or set app config"),
+    ("", "  db <sub> [...]           postgres nest: create <app> · list · info · export"),
     ("", "  status [\"message\"]       push the status site (fleet+history+ledger)"),
     ("", "  fleet                    refresh the fleet board json"),
     ("", "  stats                    run configured board-stat collectors"),
