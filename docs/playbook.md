@@ -229,7 +229,8 @@ Three timescales, all part of Roost:
   access to the Docker socket (`dokku docker-options:add pulse deploy
   "-v /var/run/docker.sock:/var/run/docker.sock:ro"`), serving `/api/stats`
   (per-container CPU%/memory from the Docker Engine API, host memory/load
-  from /proc) behind a dashboard that polls every 5 s.
+  from /proc) behind a dashboard that polls every 5 s. Also serves `/map`,
+  a live system-map view of the same data (see below).
 - **Fleet board** — snapshot: `roost fleet` (bin/fleet-board.py) collects
   over the dokku@ channel — per-app running state, HTTP 200 checks through
   nginx, process-RSS memory — and writes a statusgen board. Runs on every
@@ -250,6 +251,33 @@ shared key in `~/.roost_node_key` (must match `dokku config pulse NODE_KEY`);
 last report per node (with age) in `/api/stats`, and
 watts.jimmyhoughjr.net/roost/ renders the whole fleet's live power draw and
 cost — nodes quiet for 2+ minutes count as asleep at ≈0 W.
+
+**System map (added 2026-07-10).** `pulse.<domain>/map` renders `/api/stats`
+as a topology instead of tables: Mac node cards (measured macmon watts vs
+modeled estimate, asleep past 90 s of silence) with animated wires into the
+pi card, dokku apps as clickable up/down chips, and an ingress card.
+Linked from the dashboard header subtitle and footer; refreshes every 5 s.
+Gotcha: pulse's Dockerfile COPYs files by name, so a new file 500s in
+production until it's added to the COPY line.
+
+**Ingress/tunnel state (added 2026-07-11).** cloudflared runs on the pi
+host, invisible from pulse's container — so pulse probes its own public URL
+(`/health`) out through the Cloudflare edge every 30 s, exercising the full
+chain cloudflare → tunnel → nginx → app, and reports up/down + round-trip
+ms in `/api/stats` as `tunnel.probe` (public URL overridable via `dokku
+config pulse PUBLIC_URL`). Optional richer layer via the Cloudflare API:
+
+```sh
+# token: dash.cloudflare.com → API Tokens → Custom → permission
+#   Account → Cloudflare Tunnel → Read   (Account scope, not Zone)
+# account id: domain Overview page, right column
+ssh dokku@<pi> config:set pulse CF_API_TOKEN=<token> CF_ACCOUNT_ID=<id>
+```
+
+That adds `tunnel.cf` — the tunnel's official status, connector count, and
+edge colos (normal shape: 4 connections across 2 nearby colos) — polled at
+boot and every 5 min. Both layers render on the /map ingress card; without
+the token the card just shows the probe.
 
 ## 7c. Backups
 
@@ -287,6 +315,7 @@ never the only copy of anything.
 | vault SESSION_SECRET | `dokku config vault` | session cookie HMAC | `config:set` new random hex (logs everyone out) |
 | vault OAuth creds (pending) | `dokku config vault` | Apple/Google sign-in | provider consoles |
 | pulse NODE_KEY | `~/.roost_node_key` (600, per node) + `dokku config pulse NODE_KEY` | node-report.sh → pulse `/api/nodes` | `config:set` new random hex, update each node's file |
+| pulse CF_API_TOKEN (+ CF_ACCOUNT_ID) | `dokku config pulse` | tunnel status/colos on `/map` (`tunnel.cf`) | dash.cloudflare.com → API Tokens (Account → Cloudflare Tunnel → Read), then `config:set` |
 
 Never commit any of these; `rates.json` and other derived data are public.
 
