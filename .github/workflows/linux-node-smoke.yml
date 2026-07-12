@@ -1,0 +1,54 @@
+name: linux node smoke
+
+on:
+  pull_request:
+    paths:
+      - "bin/node-report.sh"
+      - "bin/install-node-report.sh"
+      - ".github/workflows/linux-node-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: syntax
+        run: bash -n bin/node-report.sh && bash -n bin/install-node-report.sh && bash -n bin/roost
+
+      - name: run node-report.sh against a local sink
+        run: |
+          python3 - <<'EOF' &
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          class H(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  body = self.rfile.read(int(self.headers["content-length"]))
+                  open("/tmp/payload.json", "wb").write(body)
+                  self.send_response(200)
+                  self.end_headers()
+              def log_message(self, *a): pass
+          HTTPServer(("127.0.0.1", 9099), H).serve_forever()
+          EOF
+          sleep 1
+          echo test-key > ~/.roost_node_key
+          ROOST_PULSE_URL=http://127.0.0.1:9099 ROOST_NODE_NAME=ci-smoke bin/node-report.sh
+          cat /tmp/payload.json; echo
+
+      - name: validate payload
+        run: |
+          python3 - <<'EOF'
+          import json
+          p = json.load(open("/tmp/payload.json"))
+          for k in ("name","load1","cores","memTotalMb","memUsedMb","diskTotalMb","diskUsedMb","idleW","maxW","model"):
+              assert k in p, f"missing {k}"
+          assert p["name"] == "ci-smoke"
+          assert p["cores"] >= 1 and p["memTotalMb"] > 256 and p["diskTotalMb"] > 1024
+          assert 0 < p["memUsedMb"] < p["memTotalMb"]
+          assert 0 < p["diskUsedMb"] < p["diskTotalMb"]
+          # runners have a default route, so the net fields should be present too
+          assert p.get("iface") and p.get("ip"), "net fields missing"
+          assert p.get("netRxB", 0) > 0 and p.get("netTxB", 0) > 0
+          print("payload ok:", json.dumps(p, indent=2))
+          EOF

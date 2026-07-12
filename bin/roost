@@ -82,6 +82,21 @@ case "$cmd" in
     command -v node > /dev/null && say "node" "✓ $(node --version)" || say "node" "– absent (only needed to test node apps locally)"
     [ -d "$STATUS_SITE" ] && say "status site ($STATUS_SITE)" "✓ present" || say "status site ($STATUS_SITE)" "– missing (roost status unavailable)"
 
+    [ -f "$HOME/.roost_node_key" ] && say "node key (~/.roost_node_key)" "✓ present" || say "node key (~/.roost_node_key)" "– missing (this box won't report to pulse)"
+    if [ "$(uname -s)" = Darwin ]; then
+      if launchctl list 2>/dev/null | grep -q roost-node-report; then
+        say "node-report agent" "✓ loaded (launchd)"
+      else
+        say "node-report agent" "– not loaded (run bin/install-node-report.sh)"
+      fi
+    else
+      if command -v systemctl > /dev/null && systemctl --user is-active --quiet roost-node-report.timer 2>/dev/null; then
+        say "node-report agent" "✓ active (systemd timer)"
+      else
+        say "node-report agent" "– not active (run bin/install-node-report.sh)"
+      fi
+    fi
+
     if [ "$fail" -eq 0 ]; then echo; echo "✓ roost is healthy"; else echo; echo "✗ problems found — fix the ✗ lines above"; exit 1; fi
     ;;
   help|*)
