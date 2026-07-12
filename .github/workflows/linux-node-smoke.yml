@@ -18,6 +18,9 @@ jobs:
       - name: syntax
         run: bash -n bin/node-report.sh && bash -n bin/install-node-report.sh && bash -n bin/roost
 
+      - name: hermetic fixture test (Linux branch)
+        run: tests/node-report-linux-fixture.sh
+
       - name: run node-report.sh against a local sink
         run: |
           python3 - <<'EOF' &

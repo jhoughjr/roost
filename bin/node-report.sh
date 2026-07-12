@@ -100,7 +100,7 @@ if [ "$OS" = Darwin ]; then
   done
 else
   # Top-level package domains only (intel-rapl:N, not the :N:M subzones).
-  RAPL_DIRS=$(ls -d /sys/class/powercap/intel-rapl:[0-9]* 2>/dev/null | grep -E ':[0-9]+$' || true)
+  RAPL_DIRS=$(ls -d /sys/class/powercap/intel-rapl:[0-9]* 2>/dev/null | grep -E 'intel-rapl:[0-9]+$' || true)
   FIRST=$(printf '%s\n' "$RAPL_DIRS" | head -1)
   if [ -n "$RAPL_DIRS" ] && [ -r "$FIRST/energy_uj" ]; then
     E0=0; for d in $RAPL_DIRS; do E0=$(( E0 + $(cat "$d/energy_uj") )); done
