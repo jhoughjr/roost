@@ -30,8 +30,11 @@ STATUS_SITE_DIR="$SITE" python3 "$SGEN/bin/collect/history.py" || echo "note: hi
 #    syncing here (with statusgen's content-hash versioning) closes that gap.
 "$SGEN/bin/sync-renderer.sh" "$SITE" || echo "note: renderer sync failed (non-fatal)"
 
-# 3. Gate: every board must satisfy the statusgen schema. Fatal on failure.
-python3 "$SGEN/bin/validate-board.py" "$SITE"/*/board.json
+# 3. Gate: every board must satisfy the statusgen schema (top-level boards plus
+#    the generated <slug>/history/ detail pages). Fatal on failure.
+shopt -s nullglob
+python3 "$SGEN/bin/validate-board.py" "$SITE"/*/board.json "$SITE"/*/*/board.json
+shopt -u nullglob
 
 # 4. Claude usage ledger + docs site (optional — skipped if docs isn't cloned).
 if [ -x "$DOCS/bin/usage-report.py" ]; then
