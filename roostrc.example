@@ -14,5 +14,9 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_STATS_REPO=$HOME/repos/yourapp
 # ROOST_STATS_TEST_CMD=npx vitest run
 # ROOST_STATS_LABEL=YourApp
+# roost prune — where your project repos live + extra artifact dir names
+# ROOST_PROJECTS_DIR=$HOME/repos
+# ROOST_PRUNE_EXTRA=coverage:.turbo
+
 # fleet-alert ntfy.sh phone notifications — optional; skip if unset
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678

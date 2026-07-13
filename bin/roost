@@ -7,6 +7,7 @@
 #   roost stats                                  run configured board-stat collectors
 #   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
+#   roost prune [project] [--yes] [--deep]       reclaim build artifacts (dry-run default)
 #   roost apps                                   list deployed apps
 #   roost ps [app]                               container status
 #   roost logs <app> [-n N]                      tail app logs (default 200)
@@ -35,6 +36,7 @@ case "$cmd" in
     python3 "$SGEN/bin/collect/api_consumption.py" || echo "note: api-consumption failed (non-fatal)"
     ;;
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
+  prune)  exec "$BIN/roost-prune.py" "$@" ;;
   status) exec "$BIN/status.sh" "$@" ;;
   apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
   ps)     exec ssh -o BatchMode=yes "$DOKKU" ps:report "$@" ;;
@@ -94,6 +96,6 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,16p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac
