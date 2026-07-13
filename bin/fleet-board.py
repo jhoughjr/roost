@@ -113,11 +113,12 @@ def main():
         except ValueError:
             return "wip"
 
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     board = {
         "title": "Fleet Health",
         "eyebrow": "roost · live from dokku",
-        "stamp": f"Updated {now} — collected over the dokku@ channel by roost/bin/fleet-board.py; "
+        # No baked timestamp: the renderer shows a "Generated <local time>" stamp
+        # from the board.json's HTTP Last-Modified, in the viewer's timezone.
+        "stamp": "Collected over the dokku@ channel by roost/bin/fleet-board.py; "
                  "refreshed on every roost status.",
         "sections": [
             {"kind": "stats", "items": [
