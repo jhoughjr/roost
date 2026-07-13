@@ -247,12 +247,54 @@ cross thresholds — state-transition based, so it alerts once per incident,
 not every 15 minutes.
 
 **Off-box nodes** (the CI Mac mini, a workstation): `roost/bin/node-report.sh`
-POSTs the Mac's load/memory/power-model to pulse's `/api/nodes` with the
+POSTs the Mac's load/memory/watts to pulse's `/api/nodes` with the
 shared key in `~/.roost_node_key` (must match `dokku config pulse NODE_KEY`);
 `install-node-report.sh` wires it to launchd every 30 s. pulse serves the
 last report per node (with age) in `/api/stats`, and
 watts.jimmyhoughjr.net/roost/ renders the whole fleet's live power draw and
 cost — nodes quiet for 2+ minutes count as asleep at ≈0 W.
+
+**Power: measured vs estimated (added 2026-07-10).** If `macmon` is on the
+node (`brew install macmon`, Apple silicon only), node-report.sh samples
+`macmon pipe -s 1` → `sys_power` — the SMC system-total watts, the same
+number Stats.app shows, no sudo needed — and sends it as `wattsW`. pulse
+relays it and the /roost/ page shows it with a green **measured** badge.
+Without macmon the field is omitted and the page falls back to the model
+`idleW + (maxW − idleW) × load1/cores`, badged **est**. The gap is real:
+the mini under CI load measured 17.8 W where the model said 40 W.
+
+Also reported: `power` (ac|battery) + `batteryPct` from `pmset -g batt`. A node
+on battery bills 0 toward grid cost on /roost/ (its watts were already paid at
+the wall) and shows a 🔋 badge; /map shows ⚡AC / 🔋 per node.
+
+Putting a new Mac on the meter:
+
+1. copy `~/.roost_node_key` from the workstation (chmod 600)
+2. `brew install macmon` — skip on Intel; the node then reports estimates
+3. set `ROOST_NODE_NAME=<name>` in `~/.roostrc` — the default name comes
+   from ComputerName and the sanitizer turns curly apostrophes into dashes
+   ("Jimmy's MacBook Air" → `jimmy---s-macbook-air`)
+4. run `roost/bin/install-node-report.sh`
+
+pulse keeps nodes in memory only — after a rename or a stale ghost,
+`roost restart pulse` wipes the list and live agents repopulate it within
+30 s.
+
+The host Pi itself (Orange Pi 5 Plus, RK3588): pulse already self-reports
+its load/memory from /proc, but the SoC exposes **no power sensor** —
+tools like rktop read utilization/frequencies/temps from sysfs, not watts
+(verified against its README 2026-07-10). The Pi's draw stays modeled
+unless a metering smart plug with a local API (Shelly Plug US, Tasmota)
+is put on its cord and polled.
+
+**Watts history (added 2026-07-10).** pulse samples once a minute to its
+persistent mount (`dokku storage:mount pulse
+/var/lib/dokku/data/storage/pulse:/data`, dir `/data/history`, 90-day
+retention) — host load plus each awake node's measured watts or estimate
+inputs. `/api/history?hours=N` returns the samples (decimated to ≤2000
+points), and the /roost/ page renders them as a stacked-area History card
+(24 h / 7 d / 30 d) where the top edge is the whole fleet. No mount → the
+sampler no-ops and the endpoint returns empty.
 
 **System map (added 2026-07-10).** `pulse.<domain>/map` renders `/api/stats`
 as a topology instead of tables: Mac node cards (measured macmon watts vs
