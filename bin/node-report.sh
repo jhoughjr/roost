@@ -73,8 +73,10 @@ case "$(printf '%s\n' "$BATT" | awk -F"'" '/Now drawing/{print $2; exit}')" in
   "AC Power")      POWER_JSON=",\"power\":\"ac\"" ;;
   "Battery Power") POWER_JSON=",\"power\":\"battery\"" ;;
 esac
-PCT=$(printf '%s\n' "$BATT" | grep -oE '[0-9]+%' | head -1 | tr -d '%')
-[ -n "$PCT" ] && POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"
+PCT=$(printf '%s\n' "$BATT" | grep -oE '[0-9]+%' | head -1 | tr -d '%' || true)
+# `if`, not `[ ... ] && ...`: on a desktop PCT is empty, and a bare failing
+# &&-list would trip `set -e` and abort before the POST.
+if [ -n "$PCT" ]; then POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"; fi
 
 curl -sf -m 10 -X POST "$PULSE/api/nodes" \
   -H "x-roost-node-key: $KEY" \
