@@ -35,7 +35,7 @@ case "$cmd" in
     python3 "$SGEN/bin/collect/api_consumption.py" || echo "note: api-consumption failed (non-fatal)"
     ;;
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
-  status) exec "$STATUS_SITE/push-status.sh" "$@" ;;
+  status) exec "$BIN/status.sh" "$@" ;;
   apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
   ps)     exec ssh -o BatchMode=yes "$DOKKU" ps:report "$@" ;;
   logs)

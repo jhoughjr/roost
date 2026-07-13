@@ -201,18 +201,20 @@ cd ~/status-site-local
 
 **For a single board:** edit `board.json` and `git push dokku main`.
 
-**For status-site (multi-board with history tracking):** the hub runs
-`push-status.sh` to regenerate the History board (every past push from
-git history), commit, and deploy:
+**For status-site (multi-board with history tracking):** `roost status`
+is the one orchestration point — it runs the collectors (fleet, stats,
+history), syncs the renderer, validates every board against the schema,
+then commits and deploys:
 
 ```sh
-cd ~/status-site
-# edit any board.json
-~/status-site/push-status.sh "what changed"
+# edit any board.json in ~/status-site
+roost status "what changed"
 ```
 
-The older `update-status.sh` (raw-HTML era) is legacy; don't use it for
-new boards.
+The site is pure data now (board.json + shells + manifest); the driver
+logic lives in `roost/bin/status.sh` and the collectors in statusgen. See
+statusgen's INTERFACES.md for the full contract. (The old in-site
+`push-status.sh` / `update-status.sh` scripts are gone.)
 
 ### Board schema
 
@@ -234,7 +236,7 @@ Three timescales, all part of Roost:
 - **Fleet board** — snapshot: `roost fleet` (bin/fleet-board.py) collects
   over the dokku@ channel — per-app running state, HTTP 200 checks through
   nginx, process-RSS memory — and writes a statusgen board. Runs on every
-  `push-status`. Note: per-app memory is the SUM of process RSS via
+  `roost status`. Note: per-app memory is the SUM of process RSS via
   `dokku enter <app> web ps -o rss=`; cgroup files inside `enter` sessions
   report the exec scope, not the app.
 - **History board** — evolution: every status push, generated from git.

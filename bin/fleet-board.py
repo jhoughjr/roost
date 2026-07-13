@@ -118,7 +118,7 @@ def main():
         "title": "Fleet Health",
         "eyebrow": "roost · live from dokku",
         "stamp": f"Updated {now} — collected over the dokku@ channel by roost/bin/fleet-board.py; "
-                 "refreshed on every push-status.",
+                 "refreshed on every roost status.",
         "sections": [
             {"kind": "stats", "items": [
                 {"n": f"{up}/{len(apps)}", "label": "Containers running",
