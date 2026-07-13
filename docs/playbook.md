@@ -331,6 +331,17 @@ from inside a container (the only channel is dokku@) to
 via launchd. Every site repo also has a private GitHub remote — the pi is
 never the only copy of anything.
 
+## 7d. Reclaiming disk
+
+`roost prune [project]` frees regenerable build artifacts per project (a repo
+under `ROOST_PROJECTS_DIR`, default `~/repos`): `out/`, `dist/`, `build/`,
+`DerivedData`, etc. **Dry-run by default** — it lists what it would free,
+biggest first; `--yes` deletes. `--deep` also targets `node_modules`, `.build`,
+and the electron/npm/Xcode caches (regenerable but slow to restore); `--caches`
+does only the global caches. It never touches anything outside a known artifact
+dir (source and `.git` are safe). Useful on the CI mini when Electron build
+output fills the disk — `roost prune --deep` there surfaced 14 GB.
+
 ## 8. Operational gotchas (all learned the hard way)
 
 - **Trailing slashes in links.** nginx 301s `/blog` → `http://…/blog/`

@@ -22,7 +22,8 @@ bin/new-app.sh myapp --static      # or --node, or --swift (Hummingbird 2)
 | Path | What |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | Prerequisites → first deploy: hardware, accounts, installs, tunnel |
-| [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, and every gotcha learned the hard way |
+| [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, disk reclaim, and every gotcha learned the hard way |
+| [docs/status-events.md](docs/status-events.md) | Design sketch (future): push-based CI → central ingest → boards + history |
 | [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify |
 | [bin/publish-route.sh](bin/publish-route.sh) | Publish a subdomain through the Cloudflare tunnel via API — no dashboard |
 | [bin/roost-ui.py](bin/roost-ui.py) | `roost ui` — full-screen terminal in four tabs: console (prompt + streaming commands), monitor (live fleet via pulse), config, docs pager (stdlib only) |
