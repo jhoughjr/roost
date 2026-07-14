@@ -20,6 +20,17 @@ MSG="${1:-update}"
 [ -d "$SITE" ] || { echo "roost status: site not found at $SITE (set ROOST_STATUS_SITE)" >&2; exit 1; }
 [ -d "$SGEN" ] || { echo "roost status: statusgen not found at $SGEN (set ROOST_STATUSGEN)" >&2; exit 1; }
 
+# A previous run's rebase may have wedged the clone: conflict markers crash
+# the collectors below and every later push silently no-ops (bitten twice).
+# The site is derived data, so recovery is always "adopt the mirror".
+if [ -d "$SITE/.git/rebase-merge" ] || [ -d "$SITE/.git/rebase-apply" ]; then
+  echo "note: $SITE was mid-rebase — resetting to origin/main (derived data)"
+  git -C "$SITE" rebase --abort >/dev/null 2>&1 || true
+  git -C "$SITE" checkout -q main
+  git -C "$SITE" fetch -q origin 2>/dev/null || true
+  git -C "$SITE" reset -q --hard origin/main
+fi
+
 # 1. Collectors regenerate the generated boards (fleet, stat tiles, history).
 "$BIN/fleet-board.py" "$SITE/fleet/board.json" || echo "note: fleet collection failed (non-fatal)"
 "$BIN/roost" stats || echo "note: stat collectors failed (non-fatal)"
@@ -56,8 +67,19 @@ git add -A
 git commit -q -m "status: ${MSG} ($(date +%F))" || echo "nothing new to commit"
 # Two machines push this repo (MacBook + mini's hourly refresh). Rebase on the
 # GitHub mirror first so whoever fell behind can't silently diverge and later
-# clobber the site with stale boards.
-git pull --rebase origin main 2>/dev/null || echo "note: mirror pull failed (non-fatal) — pushing local state"
+# clobber the site with stale boards. Both machines regenerate the same
+# board.json files, so rebase conflicts are routine — and never deserve a
+# wedge: everything here is derived, so on conflict adopt the mirror and let
+# the next run regenerate on top of it.
+if git fetch -q origin 2>/dev/null; then
+  if ! git rebase -q origin/main; then
+    echo "note: rebase conflict — adopting origin/main (boards regenerate next run)"
+    git rebase --abort >/dev/null 2>&1 || true
+    git reset -q --hard origin/main
+  fi
+else
+  echo "note: mirror fetch failed (non-fatal) — pushing local state"
+fi
 git push dokku main
 git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-fatal)"
 echo "✓ status deployed — https://status.jimmyhoughjr.net/"
