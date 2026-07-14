@@ -144,6 +144,60 @@ and storage with zero app-side auth code:
 The session cookie is set on `.jimmyhoughjr.net`, so one login covers
 every app.
 
+### Enabling a sign-in provider
+
+Each provider is two config vars on vault; it stays hidden from
+`/api/config` until both are set, so this is safe to do any time.
+
+- **GitHub**: github.com → Settings → Developer settings → OAuth Apps →
+  New OAuth App. Homepage `https://vault.jimmyhoughjr.net`, callback
+  `https://vault.jimmyhoughjr.net/auth/github/callback`. Then
+  `ssh dokku@192.168.0.103 config:set vault GITHUB_CLIENT_ID=… GITHUB_CLIENT_SECRET=…`
+- **Google**: console.cloud.google.com → OAuth client, callback
+  `…/auth/google/callback` → `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`.
+- **Apple**: developer.apple.com → Services ID with Sign in with Apple,
+  return URL `…/auth/apple/callback` → `APPLE_TEAM_ID`, `APPLE_SERVICE_ID`,
+  `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY` (.p8 contents).
+
+### Gating a whole static site (admin-only)
+
+Any nginx-served subdomain can be made admin-only with zero app code:
+the vault cookie is domain-wide, so nginx asks vault on every request
+via `auth_request`. status-site is the worked example (status-site#1):
+
+```nginx
+location = /_vault_auth {
+  internal;
+  proxy_pass https://vault.jimmyhoughjr.net/api/admin/stats;
+  proxy_pass_request_body off;
+  proxy_set_header Content-Length "";
+  proxy_set_header Host vault.jimmyhoughjr.net;
+  proxy_ssl_server_name on;
+  proxy_http_version 1.1;
+  proxy_connect_timeout 5s;
+  proxy_read_timeout 10s;
+}
+location = /signin.html { try_files $uri =404; }   # the one ungated path
+location / {
+  auth_request /_vault_auth;
+  error_page 401 403 = @signin;
+  try_files $uri $uri/ =404;
+}
+location @signin { return 302 /signin.html?to=$request_uri; }
+```
+
+- Gate on **admin**, not merely signed-in: provider sign-up is open to
+  anyone, so probe `/api/admin/stats` (200 only for an `ADMIN_EMAILS`
+  session, 403 otherwise) rather than `/api/me`.
+- `/signin.html` must be self-contained (inline CSS/JS): it reads
+  `/api/config` and links `VAULT/auth/<provider>?return=<url>` for each
+  live provider; if `/api/me` is already 200 it says "signed in as X —
+  not authorized" with a logout link. Copy status-site's.
+- Fails closed when vault is down. Git pushes (dokku deploys, board
+  updates) are unaffected — only HTTP viewing is gated.
+- Cost: one subrequest to vault per asset request. Fine for small sites;
+  add auth-response caching keyed on the session cookie if it ever hurts.
+
 ## 7. Status boards — the blessed component
 
 **statusgen** is Roost's supported status-board solution: a standalone
@@ -368,7 +422,7 @@ output fills the disk — `roost prune --deep` there surfaced 14 GB.
 | EIA API key | `~/.eia_api_key` (600) + `dokku config watts EIA_API_KEY` | rates refresh (local + pi cron) | eia.gov/opendata, then update both |
 | GitHub build token | `dokku docker-options blog` build-arg | portfolio build-time API calls | github.com/settings/tokens, re-add docker-option |
 | vault SESSION_SECRET | `dokku config vault` | session cookie HMAC | `config:set` new random hex (logs everyone out) |
-| vault OAuth creds (pending) | `dokku config vault` | Apple/Google sign-in | provider consoles |
+| vault OAuth creds | `dokku config vault` | GitHub/Google/Apple sign-in (§6) | provider consoles |
 | pulse NODE_KEY | `~/.roost_node_key` (600, per node) + `dokku config pulse NODE_KEY` | node-report.sh → pulse `/api/nodes` | `config:set` new random hex, update each node's file |
 | pulse CF_API_TOKEN (+ CF_ACCOUNT_ID) | `dokku config pulse` | tunnel status/colos on `/map` (`tunnel.cf`) | dash.cloudflare.com → API Tokens (Account → Cloudflare Tunnel → Read), then `config:set` |
 
