@@ -189,6 +189,12 @@ location @signin { return 302 /signin.html?to=$request_uri; }
 - Gate on **admin**, not merely signed-in: provider sign-up is open to
   anyone, so probe `/api/admin/stats` (200 only for an `ADMIN_EMAILS`
   session, 403 otherwise) rather than `/api/me`.
+- Or gate on a **GitHub org**: probe `/api/authz/org/<org>` — 200 for a
+  member of that org (captured at GitHub sign-in) *or* an admin account
+  (the lockout escape hatch). status-site uses this today
+  (`austin-macworks`). Members must sign in via GitHub; a renderer
+  session chip (statusgen, via the site's `_assets/site.json`) shows
+  who's signed in, since a passing session sails through invisibly.
 - `/signin.html` must be self-contained (inline CSS/JS): it reads
   `/api/config` and links `VAULT/auth/<provider>?return=<url>` for each
   live provider; if `/api/me` is already 200 it says "signed in as X —
