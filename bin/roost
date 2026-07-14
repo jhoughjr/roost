@@ -7,6 +7,7 @@
 #   roost stats                                  run configured board-stat collectors
 #   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
+#   roost kick                                   run the status runner's hourly deploy now
 #   roost prune [project] [--yes] [--deep]       reclaim build artifacts (dry-run default)
 #   roost apps                                   list deployed apps
 #   roost ps [app]                               container status
@@ -38,6 +39,15 @@ case "$cmd" in
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
   prune)  exec "$BIN/roost-prune.py" "$@" ;;
   status) exec "$BIN/status.sh" "$@" ;;
+  kick)
+    # Fire the status runner's LaunchAgent now instead of waiting out the hour
+    # (e.g. right after merging a site or board change on GitHub). No -k: never
+    # kill a deploy already in flight — if one is running, that's the goal met.
+    RUNNER="${ROOST_STATUS_RUNNER:-jimmyhoughjr@jimmys-mac-mini.local}"
+    AGENT="${ROOST_STATUS_AGENT:-net.jimmyhoughjr.roost-status}"
+    echo "kicking $AGENT on $RUNNER…"
+    exec ssh -o BatchMode=yes -o ConnectTimeout=8 "$RUNNER" "launchctl kickstart gui/\$(id -u)/$AGENT"
+    ;;
   apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
   ps)     exec ssh -o BatchMode=yes "$DOKKU" ps:report "$@" ;;
   logs)
