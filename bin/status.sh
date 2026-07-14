@@ -147,6 +147,12 @@ if git fetch -q origin 2>/dev/null; then
 else
   echo "note: mirror fetch failed (non-fatal) — pushing local state"
 fi
-git push dokku main
+# Dokku is a deploy SINK, not a source: nothing ever merges back from it and
+# the GitHub mirror is canonical. When an hourly run's mirror push loses a
+# race (e.g. with a PR squash-merge), dokku ends up with a commit GitHub
+# never saw and a plain push is rejected non-fast-forward forever after —
+# killing the whole run under set -e. Forcing is correct here: the tree we
+# push is always canonical-mirror + freshly regenerated boards.
+git push --force dokku main
 git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-fatal)"
 echo "✓ status deployed — https://status.jimmyhoughjr.net/"
