@@ -20,15 +20,82 @@ MSG="${1:-update}"
 [ -d "$SITE" ] || { echo "roost status: site not found at $SITE (set ROOST_STATUS_SITE)" >&2; exit 1; }
 [ -d "$SGEN" ] || { echo "roost status: statusgen not found at $SGEN (set ROOST_STATUSGEN)" >&2; exit 1; }
 
+# == Source Freshness Phase ==
+# Ensure all input repos are current before collectors run. Nothing used to
+# refresh these clones, so they could drift 1-2 commits stale, causing silent
+# feature reverts (statusgen) or stale board data (collector sources).
+# All steps are non-fatal to keep the pipeline flowing (boards regenerate
+# next run if a pull fails). Dry-run mode bypasses fetches but notes what
+# would have happened.
+
+# Site repo: abort any in-flight rebase/merge (derived data, so remote always wins).
 # A previous run's rebase may have wedged the clone: conflict markers crash
 # the collectors below and every later push silently no-ops (bitten twice).
-# The site is derived data, so recovery is always "adopt the mirror".
 if [ -d "$SITE/.git/rebase-merge" ] || [ -d "$SITE/.git/rebase-apply" ]; then
-  echo "note: $SITE was mid-rebase — resetting to origin/main (derived data)"
-  git -C "$SITE" rebase --abort >/dev/null 2>&1 || true
-  git -C "$SITE" checkout -q main
-  git -C "$SITE" fetch -q origin 2>/dev/null || true
-  git -C "$SITE" reset -q --hard origin/main
+  if [ -z "${ROOST_STATUS_DRYRUN:-}" ]; then
+    echo "note: $SITE was mid-rebase — resolving (derived data)"
+    git -C "$SITE" rebase --abort >/dev/null 2>&1 || true
+    git -C "$SITE" merge --abort >/dev/null 2>&1 || true
+  else
+    echo "note: [dry-run] $SITE would resolve mid-rebase"
+  fi
+fi
+
+# Pull site from dokku (primary remote for this machine).
+if [ -z "${ROOST_STATUS_DRYRUN:-}" ]; then
+  if git -C "$SITE" pull --rebase dokku main 2>/dev/null; then
+    echo "✓ site: fresh (dokku/main)"
+  else
+    echo "note: site pull failed (conflict?) — adopting dokku/main (boards regenerate next run)"
+    git -C "$SITE" reset --hard dokku/main 2>/dev/null || echo "note: site reset failed (remote may be unreachable)"
+  fi
+else
+  echo "note: [dry-run] site would pull --rebase dokku main"
+fi
+
+# Pull statusgen (renderer library).
+if [ -z "${ROOST_STATUS_DRYRUN:-}" ]; then
+  if git -C "$SGEN" pull --ff-only 2>/dev/null; then
+    echo "✓ statusgen: fresh"
+  else
+    echo "note: statusgen pull failed (dirty clone or diverged branch) — continuing with local version"
+  fi
+else
+  echo "note: [dry-run] statusgen would pull --ff-only"
+fi
+
+# Pull collector source repos. Optional colon-separated list of paths in
+# ROOST_SOURCE_REPOS (e.g., ROOST_SOURCE_REPOS="/path/to/phoenix:/path/to/clauffice").
+# Also pulls ROOST_STATS_REPO_DIR if set (usually a duplicate but deduplicated here).
+if [ -n "${ROOST_SOURCE_REPOS:-}" ] || [ -n "${ROOST_STATS_REPO_DIR:-}" ]; then
+  src_list="${ROOST_SOURCE_REPOS:-}"
+  if [ -n "${ROOST_STATS_REPO_DIR:-}" ]; then
+    # Add ROOST_STATS_REPO_DIR if not already in the list (simple string check).
+    if [ -n "$src_list" ]; then
+      src_list="$src_list:$ROOST_STATS_REPO_DIR"
+    else
+      src_list="$ROOST_STATS_REPO_DIR"
+    fi
+  fi
+
+  # Pull each repo.
+  IFS=:
+  for src in $src_list; do
+    IFS=" " # Reset IFS for the loop body.
+    if [ -z "$src" ]; then continue; fi
+    if [ -d "$src/.git" ]; then
+      if [ -z "${ROOST_STATUS_DRYRUN:-}" ]; then
+        if git -C "$src" pull --ff-only 2>/dev/null; then
+          echo "✓ $src: fresh"
+        else
+          echo "note: $src pull failed — continuing with local version"
+        fi
+      else
+        echo "note: [dry-run] $src would pull --ff-only"
+      fi
+    fi
+  done
+  unset IFS
 fi
 
 # 1. Collectors regenerate the generated boards (fleet, stat tiles, history).
