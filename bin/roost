@@ -45,7 +45,7 @@ case "$cmd" in
     # kill a deploy already in flight — if one is running, that's the goal met.
     RUNNER="${ROOST_STATUS_RUNNER:-jimmyhoughjr@jimmys-mac-mini.local}"
     AGENT="${ROOST_STATUS_AGENT:-net.jimmyhoughjr.roost-status}"
-    echo "kicking $AGENT on $RUNNER…"
+    echo "kicking $AGENT on $RUNNER"
     exec ssh -o BatchMode=yes -o ConnectTimeout=8 "$RUNNER" "launchctl kickstart gui/\$(id -u)/$AGENT"
     ;;
   apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
