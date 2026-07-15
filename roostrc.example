@@ -18,5 +18,7 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_PROJECTS_DIR=$HOME/repos
 # ROOST_PRUNE_EXTRA=coverage:.turbo
 
+# fleet-board — apps whose root URL intentionally redirects; default expectation is 200
+# ROOST_EXPECTED_HTTP=status:302,blog:301
 # fleet-alert ntfy.sh phone notifications — optional; skip if unset
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
