@@ -27,6 +27,11 @@ HOST_IP = DOKKU.split("@")[-1]
 DOMAIN = _RC.get("ROOST_DOMAIN", "jimmyhoughjr.net")
 METRIC_APP = _RC.get("ROOST_METRIC_APP", "vault")  # host metrics via `run`
 STATUS_SITE = os.path.expanduser(_RC.get("ROOST_STATUS_SITE", "~/status-site"))
+EXPECTED = {}
+for pair in _RC.get("ROOST_EXPECTED_HTTP", "").split(","):
+    if ":" in pair:
+        app, code = pair.split(":", 1)
+        EXPECTED[app.strip()] = code.strip()
 
 def ssh(*args, timeout=30):
     r = subprocess.run(["ssh", "-o", "BatchMode=yes", DOKKU, *args],
@@ -73,11 +78,15 @@ def main():
             rss_kb = sum(int(x) for x in ssh("enter", app, "web", "ps", "-o", "rss=").split() if x.isdigit())
             if rss_kb:
                 mem_mb = f"{rss_kb / 1024:.0f} MB"
-        healthy = running and code == "200"
+        expected = EXPECTED.get(app, "200")
+        healthy = running and code == expected
         if running: up += 1
-        if code == "200": ok += 1
+        if code == expected: ok += 1
         if mem_mb: fleet_mb += float(mem_mb.split()[0])
-        note_bits = [f"http {code}", f"{procs} proc"]
+        http_bit = f"http {code}"
+        if expected != "200" and code == expected:
+            http_bit += " (expected)"
+        note_bits = [http_bit, f"{procs} proc"]
         if mem_mb: note_bits.insert(1, mem_mb)
         if created: note_bits.append(f"container since {created}")
         rows.append({
@@ -124,7 +133,7 @@ def main():
             {"kind": "stats", "items": [
                 {"n": f"{up}/{len(apps)}", "label": "Containers running",
                  "tone": "go" if up == len(apps) else "srv"},
-                {"n": f"{ok}/{len(apps)}", "label": "Serving HTTP 200",
+                {"n": f"{ok}/{len(apps)}", "label": "Serving expected HTTP",
                  "tone": "go" if ok == len(apps) else "srv"},
                 {"n": f"{fleet_mb:.0f} MB", "label": "Apps memory (sum)", "tone": "done"},
                 {"n": mem_pct, "label": "Host memory used", "tone": tone_pct(mem_pct, 85)},
