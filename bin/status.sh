@@ -15,7 +15,21 @@ BIN="$(cd "$(dirname "$0")" && pwd)"
 SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
 SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
 DOCS="${ROOST_DOCS:-$HOME/repos/docs}"
-MSG="${1:-update}"
+# The narrative is the status message, captured per-revision by the history
+# collector. Left to a human it drifts stale while the auto-collected tiles stay
+# fresh. So when no message is given, compose one from what actually merged —
+# non-fatal, falls back to "update" on any failure.
+if [ -n "${1:-}" ]; then
+  MSG="$1"
+elif [ -n "${ROOST_STATS_GH_REPO:-}" ]; then
+  MSG="$("$BIN/gen-narrative.py" "$ROOST_STATS_GH_REPO" \
+          --branch "${ROOST_STATS_CI_BRANCH:-dev}" \
+          --since-days "${ROOST_NARRATIVE_SINCE_DAYS:-1}" \
+          ${ROOST_STATS_LABEL:+--label "$ROOST_STATS_LABEL"} 2>/dev/null)"
+  [ -n "$MSG" ] || MSG="update"
+else
+  MSG="update"
+fi
 
 [ -d "$SITE" ] || { echo "roost status: site not found at $SITE (set ROOST_STATUS_SITE)" >&2; exit 1; }
 [ -d "$SGEN" ] || { echo "roost status: statusgen not found at $SGEN (set ROOST_STATUSGEN)" >&2; exit 1; }
