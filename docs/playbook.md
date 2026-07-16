@@ -383,6 +383,17 @@ edge colos (normal shape: 4 connections across 2 nearby colos) — polled at
 boot and every 5 min. Both layers render on the /map ingress card; without
 the token the card just shows the probe.
 
+**WAN / Starlink visibility (added 2026-07-12).** The Docker image bakes in
+grpcurl to poll the Starlink dish gRPC API at 192.168.100.1:9200 (overridable
+via DISH_ADDR; answers from the LAN even in bridge mode). server.js polls
+`get_status` every 30 s and `dish_get_obstruction_map` every 10 min, serving
+the map at `/api/wan/obstruction` in `/api/stats`. The AX440 router has no
+SNMP or local API (Tether port 20002 closed), so pulse TCP-probes its web UI
+(192.168.0.1:80, overridable via ROUTER_ADDR) every 30 s for up/RTT. The
+gigabit switch is unmanaged and drawn statically. `/map` renders the ingress
+chain as dish → router → switch with click-to-expand cards and a canvas
+obstruction sky-map, refreshing every 5 s.
+
 ## 7c. Backups
 
 `roost backup` (bin/backup-roost.sh) tars each persistent storage mount
