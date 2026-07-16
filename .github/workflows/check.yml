@@ -11,3 +11,5 @@ jobs:
         run: shellcheck -S warning bin/*.sh bin/roost || true
       - name: python compile
         run: python3 -m py_compile bin/*.py
+      - name: python tests
+        run: python3 -m unittest discover -s tests -v
