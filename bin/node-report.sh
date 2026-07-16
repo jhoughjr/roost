@@ -78,8 +78,20 @@ PCT=$(printf '%s\n' "$BATT" | grep -oE '[0-9]+%' | head -1 | tr -d '%' || true)
 # &&-list would trip `set -e` and abort before the POST.
 if [ -n "$PCT" ]; then POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"; fi
 
+# GitHub Actions runners hosted on this box. A registered runner idles as a
+# `Runner.Listener` process; while it executes a job it also has a
+# `Runner.Worker`. So listeners = runners online, workers = jobs building.
+# Only sent when at least one runner is present, so the map badges the CI
+# machines and leaves everything else untouched.
+RUNNER_JSON=""
+RUNNERS=$(pgrep -f 'Runner\.Listener' 2>/dev/null | wc -l | tr -d ' ') || RUNNERS=0
+if [ "${RUNNERS:-0}" -gt 0 ]; then
+  BUSY=$(pgrep -f 'Runner\.Worker' 2>/dev/null | wc -l | tr -d ' ') || BUSY=0
+  RUNNER_JSON=",\"runners\":$RUNNERS,\"runnersBusy\":${BUSY:-0}"
+fi
+
 curl -sf -m 10 -X POST "$PULSE/api/nodes" \
   -H "x-roost-node-key: $KEY" \
   -H "content-type: application/json" \
-  -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON}" \
+  -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON}" \
   > /dev/null
