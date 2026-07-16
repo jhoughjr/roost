@@ -42,6 +42,29 @@ fi
 # next run if a pull fails). Dry-run mode bypasses fetches but notes what
 # would have happened.
 
+# Roost itself (the driver running this script). Site/statusgen/source clones
+# refresh below, but nothing refreshed THIS repo, so driver-side changes sat
+# stale on each machine until a hand pull (roost#23). Pull ff-only; if HEAD
+# moved, re-exec the new script once — ROOST_SELF_UPDATED guards against a
+# loop. Safe mid-run: git replaces files by rename, so the copy bash is
+# reading stays intact until the exec.
+ROOST_DIR="$(cd "$BIN/.." && pwd)"
+if [ -n "${ROOST_STATUS_DRYRUN:-}" ]; then
+  echo "note: [dry-run] roost would pull --ff-only (+ re-exec if updated)"
+elif [ -z "${ROOST_SELF_UPDATED:-}" ] && [ -d "$ROOST_DIR/.git" ]; then
+  before="$(git -C "$ROOST_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if git -C "$ROOST_DIR" pull --ff-only 2>/dev/null; then
+    after="$(git -C "$ROOST_DIR" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "$before" ] && [ "$before" != "$after" ]; then
+      echo "✓ roost: self-updated (${before:0:7} → ${after:0:7}) — re-running with the new driver"
+      ROOST_SELF_UPDATED=1 exec "$BIN/status.sh" ${1+"$@"}
+    fi
+    echo "✓ roost: fresh"
+  else
+    echo "note: roost pull failed (dirty clone or diverged branch) — continuing with local version"
+  fi
+fi
+
 # Site repo: abort any in-flight rebase/merge (derived data, so remote always wins).
 # A previous run's rebase may have wedged the clone: conflict markers crash
 # the collectors below and every later push silently no-ops (bitten twice).
