@@ -2,7 +2,7 @@ name: check
 on: [push, pull_request]
 jobs:
   lint:
-    runs-on: [self-hosted, macos, arm64, mini]
+    runs-on: [self-hosted, linux, arm64, opi]
     steps:
       - uses: actions/checkout@v4
       - name: bash syntax
