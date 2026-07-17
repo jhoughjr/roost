@@ -19,6 +19,11 @@
 # Non-fatal per project: a repo that errors is skipped; the rest still push.
 set -uo pipefail
 
+# launchd runs with a minimal PATH that omits Homebrew, so `gh`/`jq` (in
+# /opt/homebrew/bin) aren't found. Prepend the brew bins so the job works the
+# same from launchd as from an interactive shell.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 RC="$HOME/.roostrc"
 [ -f "$RC" ] && . "$RC"
 
