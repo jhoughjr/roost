@@ -2,7 +2,10 @@ name: check
 on: [push, pull_request]
 jobs:
   lint:
-    runs-on: [self-hosted, macos, arm64, mini]
+    # Match the labels shared by opi-roost (Linux) and mini-roost (macOS) so
+    # either can run the job — whichever is up. Keeps the mini as failover if
+    # opi is offline (and vice-versa). Steps are OS-agnostic (bash/python3).
+    runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v4
       - name: bash syntax
