@@ -10,6 +10,19 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_DOCS=$HOME/repos/docs   # usage-report.py for the Claude usage ledger
 # ROOST_CI_BOARD=someboard
 # ROOST_CI_REPOS=owner/repo:Label:4,owner/other:Other:3
+# ci-live — a self-refreshing "CI — running now" console fed by the ci-live app.
+# The static collector (ci_live.py) drops a live-console section on this board;
+# it points the renderer at the endpoint below, per project slug. The interval
+# is a first-load fallback only — the poller advertises the real cadence.
+# ROOST_CI_LIVE_BOARD=someboard
+# ROOST_CI_LIVE_URL=https://ci.jimmyhoughjr.net/api/runs
+# ROOST_CI_LIVE_PROJECT=phoenix
+# ROOST_CI_LIVE_INTERVAL=30
+# ci-live poller (ci-live-report.sh, runs on the mini) — per-project repos it
+# watches, owner/repo:project:intervalSec, and the app's base URL. The shared
+# POST key lives in ~/.roost_ci_key (chmod 600), matching `dokku config ci-live CI_KEY`.
+# ROOST_CI_LIVE_REPOS=Austin-MacWorks/Phoenix-Electron:phoenix:30
+# ROOST_CI_LIVE_ENDPOINT=https://ci.jimmyhoughjr.net
 # ROOST_STATS_BOARD=someboard
 # ROOST_STATS_REPO=$HOME/repos/yourapp
 # ROOST_STATS_TEST_CMD=npx vitest run
