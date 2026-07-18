@@ -81,11 +81,20 @@ if [ -n "$PCT" ]; then POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"; fi
 # GitHub Actions runners hosted on this box. A registered runner idles as a
 # `Runner.Listener` process; while it executes a job it also has a
 # `Runner.Worker`. So listeners = runners online, workers = jobs building.
-# Only sent when at least one runner is present, so the map badges the CI
-# machines and leaves everything else untouched.
+# We report the count whenever a runner is INSTALLED here (a `.runner` config
+# in a known runner dir) — even when it's 0 — so a runner that should be up but
+# crashed reports `runners:0` and shows as "down" on the map instead of
+# silently vanishing (a dead Runner.Listener would otherwise send nothing, the
+# blind spot that queued CI for two days). Boxes with no runner installed send
+# nothing and stay unbadged. NB: `if`, never `[ … ] && …` — a false test under
+# `set -e` would abort before the POST (see the batteryPct note above).
 RUNNER_JSON=""
 RUNNERS=$(pgrep -f 'Runner\.Listener' 2>/dev/null | wc -l | tr -d ' ') || RUNNERS=0
-if [ "${RUNNERS:-0}" -gt 0 ]; then
+RUNNER_INSTALLED=0
+for d in "$HOME"/actions-runner "$HOME"/github-runner "$HOME"/github-runner-*; do
+  if [ -e "$d/.runner" ]; then RUNNER_INSTALLED=1; break; fi
+done
+if [ "${RUNNERS:-0}" -gt 0 ] || [ "$RUNNER_INSTALLED" = 1 ]; then
   BUSY=$(pgrep -f 'Runner\.Worker' 2>/dev/null | wc -l | tr -d ' ') || BUSY=0
   RUNNER_JSON=",\"runners\":$RUNNERS,\"runnersBusy\":${BUSY:-0}"
 fi
