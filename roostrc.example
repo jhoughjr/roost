@@ -24,9 +24,17 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_CI_LIVE_REPOS=Austin-MacWorks/Phoenix-Electron:phoenix:30
 # ROOST_CI_LIVE_ENDPOINT=https://ci.jimmyhoughjr.net
 # ROOST_STATS_BOARD=someboard
-# ROOST_STATS_REPO=$HOME/repos/yourapp
-# ROOST_STATS_TEST_CMD=npx vitest run
+# ROOST_STATS_REPO_DIR=$HOME/repos/yourapp
 # ROOST_STATS_LABEL=YourApp
+# ROOST_STATS_GH_REPO=owner/yourapp        # GitHub repo for CI stats + PR narrative
+# ROOST_STATS_CI_BRANCH=dev                # branch whose CI run feeds the board
+# narrative — `roost status` with no message composes one from merged PRs
+# ROOST_NARRATIVE_SINCE_DAYS=7
+# source freshness — extra repos `roost status` pulls before collecting
+# ROOST_SOURCE_REPOS=$HOME/repos/statusgen:$HOME/repos/docs
+# status runner — where `roost kick` fires the hourly deploy agent
+# ROOST_STATUS_RUNNER=you@your-ci-mac.local
+# ROOST_STATUS_AGENT=net.yourdomain.roost-status
 # roost prune — where your project repos live + extra artifact dir names
 # ROOST_PROJECTS_DIR=$HOME/repos
 # ROOST_PRUNE_EXTRA=coverage:.turbo
@@ -35,3 +43,10 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_EXPECTED_HTTP=status:302,blog:301
 # fleet-alert ntfy.sh phone notifications — optional; skip if unset
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
+
+# node-report (per-Mac telemetry → pulse /api/nodes; key in ~/.roost_node_key)
+# ROOST_NODE_NAME=my-macbook               # default: sanitized ComputerName
+# ROOST_NODE_IDLE_W=7                      # power model inputs when macmon
+# ROOST_NODE_MAX_W=40                      #   isn't available (Intel Macs)
+# pulse base URL — `roost ui` monitor tab + node/fleet tooling
+# ROOST_PULSE_URL=https://pulse.yourdomain.net

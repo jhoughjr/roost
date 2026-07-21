@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # roost — one command for the whole platform.
 #
-#   roost new <name> [--static|--node|--swift]   nothing → live app
+#   roost new <name> [--static|--node|--swift|--board]   nothing → live app
 #   roost route <subdomain>                      publish a tunnel route
 #   roost fleet                                  refresh the fleet board json
 #   roost stats                                  run configured board-stat collectors
 #   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
 #   roost kick                                   run the status runner's hourly deploy now
-#   roost prune [project] [--yes] [--deep]       reclaim build artifacts (dry-run default)
+#   roost prune [project] [--yes] [--deep] [--caches]   reclaim build artifacts (dry-run default)
 #   roost apps                                   list deployed apps
 #   roost ps [app]                               container status
 #   roost logs <app> [-n N]                      tail app logs (default 200)
@@ -109,6 +109,6 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,18p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac

@@ -6,7 +6,7 @@ box, Dokku, a Cloudflare tunnel, and a toolbelt of scripts. From nothing
 accounts, and a status board. Written 2026-07-07 after building watts,
 vault, and head2head this way.
 
-**Starting from nothing?** Read [getting-started.md](#getting-started.md)
+**Starting from nothing?** Read [getting-started.md](getting-started.md)
 first — prerequisites, installs on host and workstation, tunnel creation,
 first deploy. This playbook starts where that ends: the box runs Dokku,
 the tunnel exists, and `dokku@192.168.0.103` accepts your key.
@@ -19,7 +19,7 @@ covers the locally-managed-tunnel variant of the same bootstrap.)
 
 **One command does all of this** (including the Cloudflare route):
 
-    ~/repos/roost/bin/new-app.sh <name> [--static|--node|--swift]
+    ~/repos/roost/bin/new-app.sh <name> [--static|--node|--swift|--board]
 
 It creates the Dokku app and domain, scaffolds a repo from a template
 (static nginx / zero-dep Node / Hummingbird 2 Swift), makes the first
@@ -30,9 +30,16 @@ All toolbelt scripts read `~/.roostrc` (simple `KEY=VALUE` lines:
 `ROOST_DOKKU_HOST`, `ROOST_DOMAIN`, `ROOST_METRIC_APP`,
 `ROOST_STATUS_SITE`) so nothing is hardcoded to one person's host — copy
 `roostrc.example` from the repo and fill in yours. The `roost` command
-wraps everything: `roost new`, `roost route`, `roost fleet`,
-`roost backup`, `roost status`, and `roost doctor` (diagnoses SSH, token,
-tunnel, and tooling problems — run it first when anything misbehaves).
+wraps everything — `roost help` prints the full list:
+
+- lifecycle: `roost new`, `roost route`
+- status site: `roost status`, `roost stats`, `roost fleet`, `roost kick`
+- day-2 Dokku ops: `roost apps`, `roost ps`, `roost logs`, `roost restart`,
+  `roost config`
+- housekeeping: `roost backup`, `roost prune`
+- `roost doctor` (diagnoses SSH, token, tunnel, and tooling problems —
+  run it first when anything misbehaves) and `roost ui` (full-screen
+  terminal: console, monitor, config, docs tabs)
 
 ```sh
 ssh dokku@192.168.0.103 apps:create <name>
@@ -271,6 +278,13 @@ then commits and deploys:
 roost status "what changed"
 ```
 
+With no message, `roost status` composes the narrative itself from the
+week's merged PRs (`bin/gen-narrative.py`, needs `ROOST_STATS_GH_REPO`
+in `~/.roostrc`). And when a site or board change lands on GitHub and
+you don't want to wait out the hour: `roost kick` fires the status
+runner's LaunchAgent on the CI Mac immediately (it never kills a deploy
+already in flight).
+
 The site is pure data now (board.json + shells + manifest); the driver
 logic lives in `roost/bin/status.sh` and the collectors in statusgen. See
 statusgen's INTERFACES.md for the full contract. (The old in-site
@@ -339,6 +353,16 @@ Putting a new Mac on the meter:
 pulse keeps nodes in memory only — after a rename or a stale ghost,
 `roost restart pulse` wipes the list and live agents repopulate it within
 30 s.
+
+**Live CI runs.** `roost/bin/ci-live-report.sh` runs on the CI Mac and
+POSTs in-progress/queued GitHub Actions runs (via `gh`) to the ci-live
+app's `/api/runs`, which the boards' live console renders. Config:
+`ROOST_CI_LIVE_REPOS` (`owner/repo:project:intervalSec`, comma-separated)
+and `ROOST_CI_LIVE_ENDPOINT` in `~/.roostrc`; the shared POST key lives
+in `~/.roost_ci_key` (chmod 600, matching `dokku config ci-live CI_KEY`).
+`install-ci-live-report.sh` wires it to launchd
+(`net.jimmyhoughjr.roost-ci-live`, every 20 s) with Homebrew on PATH so
+the poller finds `gh`/`jq`.
 
 The host Pi itself (Orange Pi 5 Plus, RK3588): pulse already self-reports
 its load/memory from /proc, but the SoC exposes **no power sensor** —
@@ -442,6 +466,7 @@ output fills the disk — `roost prune --deep` there surfaced 14 GB.
 | vault OAuth creds | `dokku config vault` | GitHub/Google/Apple sign-in (§6) | provider consoles |
 | pulse NODE_KEY | `~/.roost_node_key` (600, per node) + `dokku config pulse NODE_KEY` | node-report.sh → pulse `/api/nodes` | `config:set` new random hex, update each node's file |
 | pulse CF_API_TOKEN (+ CF_ACCOUNT_ID) | `dokku config pulse` | tunnel status/colos on `/map` (`tunnel.cf`) | dash.cloudflare.com → API Tokens (Account → Cloudflare Tunnel → Read), then `config:set` |
+| ci-live CI_KEY | `~/.roost_ci_key` (600, on the CI Mac) + `dokku config ci-live CI_KEY` | ci-live-report.sh → ci-live `/api/runs` | `config:set` new random hex, update the poller Mac's file |
 
 Never commit any of these; `rates.json` and other derived data are public.
 
