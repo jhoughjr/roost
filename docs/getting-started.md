@@ -3,7 +3,7 @@
 Prerequisites to first deploy.
 
 **Roost** is a self-hosted app platform on one small box. The
-[playbook](#playbook.md) assumes a working stack. This guide gets you *to* that stack from nothing: what to buy,
+[playbook](playbook.md) assumes a working stack. This guide gets you *to* that stack from nothing: what to buy,
 what to install, what accounts you need, and the first live app.
 
 What you're building:
@@ -131,7 +131,8 @@ what's missing.
 domain, scaffolded repo at `~/hello-site`, first deploy, DNS + tunnel
 route via API, LAN and public verification. Templates: `--static`
 (nginx), `--node` (zero-dep server with `/health`), `--swift`
-(Hummingbird 2; first pi build ~8 min).
+(Hummingbird 2; first pi build ~8 min), `--board` (statusgen status
+board, see the playbook §7).
 
 If the browser says "can't find the server" while the script's public
 check passed: that's your machine's cached negative DNS from before the
@@ -140,7 +141,7 @@ mDNSResponder` on macOS) or wait it out.
 
 ## 6. Where to go next
 
-- **The [playbook](#playbook.md)** — persistent storage,
+- **The [playbook](playbook.md)** — persistent storage,
   crons, secrets, accounts (vault), status boards, and every gotcha this
   stack has taught us, including the troubleshooting table in
   [statusgen SETUP.md](https://github.com/jhoughjr/statusgen/blob/main/SETUP.md)
