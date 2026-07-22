@@ -320,10 +320,11 @@ sends a desktop notification when an app stops serving 200 or disk/memory
 cross thresholds — state-transition based, so it alerts once per incident,
 not every 15 minutes.
 
-**Off-box nodes** (the CI Mac mini, a workstation): `roost/bin/node-report.sh`
-POSTs the Mac's load/memory/watts to pulse's `/api/nodes` with the
+**Off-box nodes** (the CI Mac mini, a workstation, opi): `roost/bin/node-report.sh`
+POSTs the box's load/memory/watts to pulse's `/api/nodes` with the
 shared key in `~/.roost_node_key` (must match `dokku config pulse NODE_KEY`);
-`install-node-report.sh` wires it to launchd every 30 s. pulse serves the
+`install-node-report.sh` wires it to launchd every 30 s — or, on Linux, to a
+systemd **user** timer (no sudo, which is what opi has). pulse serves the
 last report per node (with age) in `/api/stats`, and
 watts.jimmyhoughjr.net/roost/ renders the whole fleet's live power draw and
 cost — nodes quiet for 2+ minutes count as asleep at ≈0 W.
@@ -337,18 +338,27 @@ Without macmon the field is omitted and the page falls back to the model
 `idleW + (maxW − idleW) × load1/cores`, badged **est**. The gap is real:
 the mini under CI load measured 17.8 W where the model said 40 W.
 
-Also reported: `power` (ac|battery) + `batteryPct` from `pmset -g batt`. A node
+On Linux there is no sudoless system-power sensor (the Pi-class PMIC exposes
+none), so those nodes are always **est** — set `ROOST_NODE_IDLE_W`/`MAX_W` in
+`~/.roostrc` to make the estimate honest (opi: 4 / 15, the ceiling its 5 V
+supply can actually deliver).
+
+Also reported: `power` (ac|battery) + `batteryPct` from `pmset -g batt`, or on
+Linux from `/sys/class/power_supply` — a box with no battery reads `ac`. A node
 on battery bills 0 toward grid cost on /roost/ (its watts were already paid at
 the wall) and shows a 🔋 badge; /map shows ⚡AC / 🔋 per node.
 
-Putting a new Mac on the meter:
+Putting a new box on the meter:
 
 1. copy `~/.roost_node_key` from the workstation (chmod 600)
-2. `brew install macmon` — skip on Intel; the node then reports estimates
+2. `brew install macmon` — skip on Intel and on Linux; the node then reports
+   estimates
 3. set `ROOST_NODE_NAME=<name>` in `~/.roostrc` — the default name comes
-   from ComputerName and the sanitizer turns curly apostrophes into dashes
-   ("Jimmy's MacBook Air" → `jimmy---s-macbook-air`)
+   from ComputerName (Linux: hostname) and the sanitizer turns curly
+   apostrophes into dashes ("Jimmy's MacBook Air" → `jimmy---s-macbook-air`)
 4. run `roost/bin/install-node-report.sh`
+5. Linux only: `sudo loginctl enable-linger <user>`, or the user timer dies at
+   logout and never comes back after a reboot (the installer warns if it's off)
 
 pulse keeps nodes in memory only — after a rename or a stale ghost,
 `roost restart pulse` wipes the list and live agents repopulate it within
