@@ -44,9 +44,10 @@ ROOST_STATUS_SITE=$HOME/status-site
 # fleet-alert ntfy.sh phone notifications — optional; skip if unset
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
 
-# node-report (per-Mac telemetry → pulse /api/nodes; key in ~/.roost_node_key)
-# ROOST_NODE_NAME=my-macbook               # default: sanitized ComputerName
+# node-report (per-node telemetry → pulse /api/nodes; key in ~/.roost_node_key)
+# macOS and Linux; on Linux set the watts by hand — there's no macmon there.
+# ROOST_NODE_NAME=my-macbook               # default: ComputerName / hostname
 # ROOST_NODE_IDLE_W=7                      # power model inputs when macmon
-# ROOST_NODE_MAX_W=40                      #   isn't available (Intel Macs)
+# ROOST_NODE_MAX_W=40                      #   isn't available (Intel, Linux)
 # pulse base URL — `roost ui` monitor tab + node/fleet tooling
 # ROOST_PULSE_URL=https://pulse.yourdomain.net

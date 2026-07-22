@@ -53,7 +53,7 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 | [bin/publish-route.sh](bin/publish-route.sh) | Publish a subdomain through the Cloudflare tunnel via API — no dashboard |
 | [bin/status.sh](bin/status.sh) | The `roost status` orchestrator: self-update, collect, validate, deploy |
 | [bin/fleet-board.py](bin/fleet-board.py) / [bin/fleet-alert.py](bin/fleet-alert.py) | Fleet snapshot board + state-transition desktop/ntfy alerts |
-| [bin/node-report.sh](bin/node-report.sh) | Per-Mac telemetry (load/mem/disk/watts/battery/runner) → pulse `/api/nodes`; launchd installer alongside |
+| [bin/node-report.sh](bin/node-report.sh) | Per-node telemetry (load/mem/disk/watts/battery/runner) → pulse `/api/nodes`, macOS + Linux; launchd/systemd installer alongside |
 | [bin/ci-live-report.sh](bin/ci-live-report.sh) | Live CI-run poller (runs on the CI Mac) → the ci-live app; launchd installer alongside |
 | [bin/gen-narrative.py](bin/gen-narrative.py) | Composes the board narrative from merged PRs when `roost status` gets no message |
 | [bin/roost-prune.py](bin/roost-prune.py) / [bin/backup-roost.sh](bin/backup-roost.sh) | Disk reclaim (dry-run default) / nightly storage-mount backups |
