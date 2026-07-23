@@ -50,3 +50,8 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_NODE_MAX_W=40                      #   isn't available (Intel Macs)
 # pulse base URL — `roost ui` monitor tab + node/fleet tooling
 # ROOST_PULSE_URL=https://pulse.yourdomain.net
+
+# loc collector — JSON config describing the LOC buckets a board charts.
+# Lives with the board it describes (see status-site/<slug>/loc.config.json)
+# so both writer machines get it by git pull. Unset = collector skips.
+# ROOST_LOC_CONFIG=$HOME/status-site/clauffice/loc.config.json
