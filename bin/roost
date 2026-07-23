@@ -35,6 +35,7 @@ case "$cmd" in
     python3 "$SGEN/bin/collect/ci_status.py" || echo "note: ci status failed (non-fatal)"
     python3 "$SGEN/bin/collect/ci_live.py" || echo "note: ci live failed (non-fatal)"
     python3 "$SGEN/bin/collect/shipped_week.py" || echo "note: shipped-week failed (non-fatal)"
+    python3 "$SGEN/bin/collect/narrative.py" || echo "note: narrative failed (non-fatal)"
     python3 "$SGEN/bin/collect/api_consumption.py" || echo "note: api-consumption failed (non-fatal)"
     python3 "$SGEN/bin/collect/proposal_state.py" || echo "note: proposal-state failed (non-fatal)"
     python3 "$SGEN/bin/collect/builds.py" || echo "note: builds failed (non-fatal)"
