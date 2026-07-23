@@ -38,6 +38,7 @@ case "$cmd" in
     python3 "$SGEN/bin/collect/api_consumption.py" || echo "note: api-consumption failed (non-fatal)"
     python3 "$SGEN/bin/collect/proposal_state.py" || echo "note: proposal-state failed (non-fatal)"
     python3 "$SGEN/bin/collect/builds.py" || echo "note: builds failed (non-fatal)"
+    python3 "$SGEN/bin/collect/loc.py" || echo "note: loc failed (non-fatal)"
     ;;
   backup) exec "$BIN/backup-roost.sh" "$@" ;;
   prune)  exec "$BIN/roost-prune.py" "$@" ;;
