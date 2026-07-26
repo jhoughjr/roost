@@ -11,8 +11,20 @@
 # from launchd every ~20 s for a live feed — see install-ci-live-report.sh.
 #
 # Config (~/.roostrc KEY=VALUE lines):
-#   ROOST_CI_LIVE_REPOS     owner/repo:project:intervalSec,...  (required)
-#                           e.g. Austin-MacWorks/Phoenix-Electron:phoenix:30
+#   ROOST_CI_LIVE_REPOS     owner/repo:project:intervalSec[:Label],...  (required)
+#                           e.g. Austin-MacWorks/Phoenix-Electron:phoenix:30:Phoenix
+#                           Label is what the board's console prints; it
+#                           defaults to the repo name, so match it to the
+#                           label in ROOST_CI_REPOS or the same repo will be
+#                           called two different things depending on whether
+#                           its run is still going.
+#   ROOST_CI_LIVE_AGGREGATE optional project name carrying EVERY repo's live
+#                           runs merged into one feed, newest first. A board's
+#                           live-console polls exactly one project, so without
+#                           this a two-repo board can only ever show one repo
+#                           running — and the long build is the one you most
+#                           want to watch. Per-repo projects are still pushed;
+#                           give this a name none of them use (e.g. `all`).
 #   ROOST_CI_LIVE_ENDPOINT  ci-live base URL (default https://ci.jimmyhoughjr.net)
 # Shared key: ~/.roost_ci_key (chmod 600), must match `dokku config ci-live CI_KEY`.
 #
@@ -22,7 +34,13 @@ set -uo pipefail
 # launchd runs with a minimal PATH that omits Homebrew, so `gh`/`jq` (in
 # /opt/homebrew/bin) aren't found. Prepend the brew bins so the job works the
 # same from launchd as from an interactive shell.
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+#
+# Only when they're actually missing: an unconditional prepend also overrides a
+# caller who put its own `gh` ahead of the real one, which is exactly how this
+# script is tested against canned runs.
+if ! command -v gh >/dev/null || ! command -v jq >/dev/null; then
+  export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+fi
 
 RC="$HOME/.roostrc"
 [ -f "$RC" ] && . "$RC"
@@ -41,15 +59,36 @@ command -v jq  >/dev/null || { echo "ci-live-report: jq not found" >&2; exit 1; 
 # The live states — exactly the ones ci_status.py's CONSOLE_SKIP drops.
 LIVE='["in_progress","queued","waiting","requested"]'
 
+AGGREGATE="${ROOST_CI_LIVE_AGGREGATE:-}"
+ALL_LINES='[]'      # every repo's live lines, for the aggregate feed
+AGG_INTERVAL=''     # the aggregate refreshes as often as its fastest member
+AGG_REPOS=0         # how many repos actually answered this pass
+
+# POST one project's console lines to the ci-live store.
+push_project() {
+  local project="$1" lines="$2" interval="$3" source="$4" body code n
+  body=$(jq -n --arg project "$project" --argjson lines "$lines" \
+    --argjson intervalMs "$(( interval * 1000 ))" \
+    '{project: $project, lines: $lines, intervalMs: $intervalMs}')
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST "$ENDPOINT/api/runs" \
+    -H "x-roost-ci-key: $KEY" \
+    -H "content-type: application/json" \
+    -d "$body") || code=000
+  n=$(jq 'length' <<< "$lines")
+  echo "ci-live-report: $project ($source) — $n live run(s) → $code"
+}
+
 IFS=',' read -r -a SPECS <<< "$REPOS"
 for SPEC in "${SPECS[@]}"; do
   SPEC="$(echo "$SPEC" | tr -d '[:space:]')"
   [ -n "$SPEC" ] || continue
-  REPO="${SPEC%%:*}"; REST="${SPEC#*:}"
-  PROJECT="${REST%%:*}"; INTERVAL="${REST##*:}"
+  # Split on ':' by field rather than by prefix/suffix trimming: with the
+  # optional 4th field, "last field" is the label, not the interval.
+  IFS=':' read -r REPO PROJECT INTERVAL LABEL <<< "$SPEC"
   # Defaults if the spec omitted fields.
-  [ "$PROJECT" = "$REST" ] && PROJECT="${REPO##*/}"      # no project → repo name
+  [ -n "$PROJECT" ] || PROJECT="${REPO##*/}"              # no project → repo name
   case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=30 ;; esac    # non-numeric → 30s
+  [ -n "$LABEL" ] || LABEL="${REPO##*/}"                  # no label → repo name
   [ -n "$REPO" ] && [ -n "$PROJECT" ] || continue
 
   RUNS=$(gh run list --repo "$REPO" --limit 12 \
@@ -57,12 +96,12 @@ for SPEC in "${SPECS[@]}"; do
   [ -n "$RUNS" ] || { echo "ci-live-report: $REPO — gh returned nothing, skipping"; continue; }
 
   # Keep only live states; build the exact console-line dicts the board expects.
-  # text  "<Label> · <headBranch>"   (Label = repo name, title-ish)
+  # text  "<Label> · <headBranch>"   (Label from the spec, or the repo name)
   # meta  "· <event>"     tone "wip"   ts createdAt   href url
   # cmd   "gh run watch <id> -R <repo>"  → the copy-to-clipboard "watch it live" chip
-  LINES=$(echo "$RUNS" | jq -c --arg repo "$REPO" --argjson live "$LIVE" '
-    ($repo | split("/") | last) as $label
-    | [ .[]
+  LINES=$(echo "$RUNS" | jq -c --arg repo "$REPO" --arg label "$LABEL" \
+    --argjson live "$LIVE" '
+    [ .[]
         | select(.status as $s | $live | index($s))
         | {
             status: (.status | gsub("_"; " ")),
@@ -75,14 +114,25 @@ for SPEC in "${SPECS[@]}"; do
           } ]
   ') || { echo "ci-live-report: $REPO — jq transform failed, skipping"; continue; }
 
-  BODY=$(jq -n --arg project "$PROJECT" --argjson lines "$LINES" \
-    --argjson intervalMs "$(( INTERVAL * 1000 ))" \
-    '{project: $project, lines: $lines, intervalMs: $intervalMs}')
+  AGG_REPOS=$(( AGG_REPOS + 1 ))
+  if [ -n "$AGGREGATE" ]; then
+    ALL_LINES=$(jq -c -n --argjson a "$ALL_LINES" --argjson b "$LINES" '$a + $b')
+    if [ -z "$AGG_INTERVAL" ] || [ "$INTERVAL" -lt "$AGG_INTERVAL" ]; then
+      AGG_INTERVAL="$INTERVAL"
+    fi
+  fi
 
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST "$ENDPOINT/api/runs" \
-    -H "x-roost-ci-key: $KEY" \
-    -H "content-type: application/json" \
-    -d "$BODY") || CODE=000
-  N=$(echo "$LINES" | jq 'length')
-  echo "ci-live-report: $PROJECT ($REPO) — $N live run(s) → $CODE"
+  push_project "$PROJECT" "$LINES" "$INTERVAL" "$REPO"
 done
+
+# The merged feed, newest run first regardless of which repo it came from.
+#
+# Only when at least one repo answered: an empty aggregate posted after a
+# wholesale gh failure would read as "nothing is building" and quietly replace
+# a feed that was correct a minute ago. Per-repo pushes already skip on error
+# for the same reason. An empty aggregate from repos that DID answer is real
+# and must be posted, or finished runs would linger as "running" forever.
+if [ -n "$AGGREGATE" ] && [ "$AGG_REPOS" -gt 0 ]; then
+  MERGED=$(jq -c 'sort_by(.ts // "") | reverse' <<< "$ALL_LINES") || MERGED="$ALL_LINES"
+  push_project "$AGGREGATE" "$MERGED" "${AGG_INTERVAL:-30}" "$AGG_REPOS repos"
+fi
