@@ -33,6 +33,10 @@ case "$cmd" in
     [ -d "$SGEN/bin/collect" ] || { echo "roost stats: statusgen not found at $SGEN (set ROOST_STATUSGEN)"; exit 1; }
     python3 "$SGEN/bin/collect/repo_stats.py" || echo "note: repo stats failed (non-fatal)"
     python3 "$SGEN/bin/collect/ci_status.py" || echo "note: ci status failed (non-fatal)"
+    # After ci_status: that one owns each repo's ✓/✗ tile, this one adds the
+    # build's cost (time + green rate + trend) beside it.
+    python3 "$SGEN/bin/collect/ci_health.py" || echo "note: ci health failed (non-fatal)"
+    python3 "$SGEN/bin/collect/swift_tests.py" || echo "note: swift-tests failed (non-fatal)"
     python3 "$SGEN/bin/collect/ci_live.py" || echo "note: ci live failed (non-fatal)"
     python3 "$SGEN/bin/collect/shipped_week.py" || echo "note: shipped-week failed (non-fatal)"
     python3 "$SGEN/bin/collect/narrative.py" || echo "note: narrative failed (non-fatal)"

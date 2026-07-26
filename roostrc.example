@@ -10,6 +10,19 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_DOCS=$HOME/repos/docs   # usage-report.py for the Claude usage ledger
 # ROOST_CI_BOARD=someboard
 # ROOST_CI_REPOS=owner/repo:Label:4,owner/other:Other:3
+# ci-health — build COST beside the ✓/✗: build time, green rate, and a
+# build-time trend chart, per repo, written into that repo's compare column.
+# owner/repo:ColumnTitleMatch:branch:samples[:workflow]. Worth having wherever
+# a pipeline compiles something: a caching win that halves the build is
+# invisible in a green checkmark.
+# ROOST_CI_HEALTH_BOARD=someboard
+# ROOST_CI_HEALTH=owner/server:Server:dev:12
+# swift-tests — a test INVENTORY tile (cases + files) counted from
+# origin/<branch>, for a Swift repo whose suite does not run in CI and so has
+# no report to read. Labelled "Tests written", never "green": nothing here
+# observed a test pass. dir:ColumnTitleMatch:branch[:testsDir]
+# ROOST_SWIFT_TESTS_BOARD=someboard
+# ROOST_SWIFT_TESTS=$HOME/repos/server:Server:dev
 # ci-live — a self-refreshing "CI — running now" console fed by the ci-live app.
 # The static collector (ci_live.py) drops a live-console section on this board;
 # it points the renderer at the endpoint below, per project slug. The interval
@@ -19,10 +32,18 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_CI_LIVE_PROJECT=phoenix
 # ROOST_CI_LIVE_INTERVAL=30
 # ci-live poller (ci-live-report.sh, runs on the mini) — per-project repos it
-# watches, owner/repo:project:intervalSec, and the app's base URL. The shared
-# POST key lives in ~/.roost_ci_key (chmod 600), matching `dokku config ci-live CI_KEY`.
-# ROOST_CI_LIVE_REPOS=Austin-MacWorks/Phoenix-Electron:phoenix:30
+# watches, owner/repo:project:intervalSec[:Label], and the app's base URL. Label
+# is what the console prints; match it to the label in ROOST_CI_REPOS or the
+# same repo gets two names depending on whether its run has finished.
+# The shared POST key lives in ~/.roost_ci_key (chmod 600), matching
+# `dokku config ci-live CI_KEY`.
+# ROOST_CI_LIVE_REPOS=Austin-MacWorks/Phoenix-Electron:phoenix:30:Phoenix
 # ROOST_CI_LIVE_ENDPOINT=https://ci.jimmyhoughjr.net
+# One extra project carrying every repo's live runs merged, newest first. A
+# live-console polls exactly ONE project, so a multi-repo board needs this to
+# show more than one repo running — point ROOST_CI_LIVE_PROJECT at it. Use a
+# name no per-repo project uses.
+# ROOST_CI_LIVE_AGGREGATE=all
 # ROOST_STATS_BOARD=someboard
 # ROOST_STATS_REPO_DIR=$HOME/repos/yourapp
 # ROOST_STATS_LABEL=YourApp
