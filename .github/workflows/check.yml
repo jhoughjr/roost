@@ -10,6 +10,32 @@ jobs:
       - uses: actions/checkout@v4
       - name: bash syntax
         run: for f in bin/*.sh bin/roost; do bash -n "$f"; done
+      - name: ensure shellcheck
+        # Neither self-hosted runner ships shellcheck, and until now the step
+        # ran with `|| true` — so "command not found" passed silently and this
+        # gate had never actually linted anything. Fetch the pinned static
+        # build into ~/.local/bin: no root (opi has no passwordless sudo), no
+        # brew (absent from the mini's non-interactive PATH), and it persists
+        # on the runner so only the first run pays for it. Pinned so both
+        # runners agree on what counts as a warning.
+        run: |
+          set -euo pipefail
+          VER=0.11.0
+          BIN="$HOME/.local/bin"
+          echo "$BIN" >> "$GITHUB_PATH"
+          if command -v shellcheck >/dev/null 2>&1 || [ -x "$BIN/shellcheck" ]; then
+            exit 0
+          fi
+          case "$(uname -s)" in
+            Darwin) PLAT=darwin ;;
+            Linux)  PLAT=linux ;;
+            *) echo "unsupported OS for shellcheck bootstrap: $(uname -s)" >&2; exit 1 ;;
+          esac
+          ARCH="$(uname -m)"; [ "$ARCH" = arm64 ] && ARCH=aarch64
+          mkdir -p "$BIN"
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v$VER/shellcheck-v$VER.$PLAT.$ARCH.tar.gz" \
+            | tar -xz -C "$BIN" --strip-components=1 "shellcheck-v$VER/shellcheck"
+          "$BIN/shellcheck" --version | sed -n 2p
       - name: shellcheck
         run: shellcheck -S warning bin/*.sh bin/roost
       - name: python compile
