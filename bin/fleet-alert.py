@@ -12,21 +12,10 @@ BIN = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.expanduser("~/.roost-fleet-state.json")
 WARN_PCT = 85
 
-def load_config():
-    """Load roost config from ~/.roostrc (shell-style KEY=VALUE)."""
-    config = {}
-    rc_path = os.path.expanduser("~/.roostrc")
-    try:
-        with open(rc_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    if "=" in line:
-                        key, val = line.split("=", 1)
-                        config[key.strip()] = val.strip()
-    except OSError:
-        pass
-    return config
+sys.path.insert(0, BIN)
+import roostlib  # noqa: E402
+
+load_config = roostlib.read_rc
 
 def notify(title, msg):
     subprocess.run(["osascript", "-e",

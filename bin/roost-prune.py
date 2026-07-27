@@ -37,15 +37,10 @@ GLOBAL_CACHES = [
 ]
 
 
-def rc(key, default=""):
-    try:
-        for line in open(os.path.expanduser("~/.roostrc")):
-            line = line.strip()
-            if line.startswith(f"{key}=") and not line.startswith("#"):
-                return os.path.expandvars(line.split("=", 1)[1].strip())
-    except OSError:
-        pass
-    return default
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import roostlib  # noqa: E402
+
+rc = roostlib.rc
 
 
 def du_bytes(path):

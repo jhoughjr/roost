@@ -44,26 +44,19 @@ TODO = os.path.join(ROOT, "TODO.md")
 README = os.path.join(ROOT, "README.md")
 
 
-def read_rc():
-    cfg = {}
-    try:
-        for line in open(os.path.expanduser("~/.roostrc")):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                cfg[k.strip()] = os.path.expandvars(v.strip().strip('"'))
-    except OSError:
-        pass
-    return cfg
+sys.path.insert(0, BIN)
+import roostlib  # noqa: E402  (needs BIN on sys.path when loaded by file path)
 
-
+read_rc = roostlib.read_rc
 RC = read_rc()
-DOKKU = RC.get("ROOST_DOKKU_HOST", "dokku@192.168.0.103")
-DOMAIN = RC.get("ROOST_DOMAIN", "jimmyhoughjr.net")
-PULSE = RC.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net")
+DOKKU = roostlib.rc("ROOST_DOKKU_HOST")
+DOMAIN = roostlib.rc("ROOST_DOMAIN")
+PULSE = roostlib.rc("ROOST_PULSE_URL")
 
+# `prune` stays console-less on purpose: its du sweep over every repo can run
+# minutes and the console is a bad place to sit through that — use a shell.
 PASSTHROUGH = ["apps", "ps", "logs", "restart", "config", "status",
-               "fleet", "stats", "doctor", "backup", "new", "route"]
+               "fleet", "stats", "doctor", "backup", "new", "route", "kick"]
 INTERNAL = ["playbook", "start", "todo", "help", "clear", "quit",
             "monitor", "docs"]
 ALL_CMDS = sorted(set(PASSTHROUGH + INTERNAL))
@@ -84,6 +77,7 @@ CMD_DESC = {
     "backup": "pull pi data to ~/Backups/roost",
     "new": "scaffold and deploy a new app",
     "route": "publish a tunnel route",
+    "kick": "run the status runner's deploy now",
     "playbook": "browse the operating manual",
     "start": "browse getting-started.md",
     "todo": "show TODO.md",
