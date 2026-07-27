@@ -2,8 +2,10 @@
 
 Pure bash + stdlib-Python toolbelt — no build system, no package manifest,
 no dependencies beyond `gh`/`curl`/`ssh`. Everything executable lives in
-`bin/`; `bin/roost` is a single bash `case` dispatcher (there is no
-git-style `roost-$cmd` plugin mechanism, despite old plans).
+`bin/`; `bin/roost` is a single bash `case` dispatcher whose catch-all
+execs `roost-$cmd` — looked up on PATH, then in `$ROOST_STATUSGEN/bin`
+— so plugins are git-style, while every builtin still wins over a
+same-named plugin.
 
 ## Where truth lives
 
@@ -14,9 +16,12 @@ git-style `roost-$cmd` plugin mechanism, despite old plans).
 - `roost help` prints lines 4–18 of `bin/roost` verbatim (via `sed`). If
   you add a subcommand, add its header line **and** keep the `sed -n`
   range in the `help` case covering it.
-- `~/.roostrc` is plain `KEY=VALUE`; each Python tool re-parses it
-  independently. Keep `roostrc.example` in sync with what code actually
-  reads — grep `ROOST_` across `bin/` *and* `statusgen/bin/` (several
+- `~/.roostrc` is plain `KEY=VALUE`, read through **one** reader per
+  language: `bin/roost-env.sh` (sourced by every bash entrypoint) and
+  `bin/roostlib.py` (imported by every Python tool). Both also hold the
+  fallback defaults — change a default in those two files, nowhere else.
+  Precedence is rc → environment → default. Keep `roostrc.example` in
+  sync with what code actually reads — grep `ROOST_` across `bin/` *and* `statusgen/bin/` (several
   example keys are consumed by statusgen collectors, not roost).
 - Secrets are never in `.roostrc`: `~/.cf_api_token`, `~/.roost_node_key`,
   `~/.roost_ci_key`, `~/.eia_api_key` (all chmod 600).

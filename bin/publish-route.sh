@@ -15,8 +15,8 @@
 # and store it: printf '%s' '<token>' > ~/.cf_api_token && chmod 600 ~/.cf_api_token
 set -euo pipefail
 
-[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
-DOMAIN="${ROOST_DOMAIN:-jimmyhoughjr.net}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "$0")" && pwd)/roost-env.sh"
 # Tunnel is discovered from the account (healthy + remote-managed), not
 # hardcoded — an old tunnel ID from shell history burned us once.
 

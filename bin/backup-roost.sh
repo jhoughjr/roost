@@ -3,8 +3,8 @@
 # Tars each storage mount from inside a container (the only channel we
 # have is dokku@), keeps 14 days. Run via launchd; safe to run any time.
 set -euo pipefail
-[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
-DOKKU="${ROOST_DOKKU_HOST:-dokku@192.168.0.103}"
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "$0")" && pwd)/roost-env.sh"
 DEST="$HOME/Backups/roost"
 STAMP="$(date +%F)"
 mkdir -p "$DEST"

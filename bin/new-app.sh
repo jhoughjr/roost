@@ -17,10 +17,9 @@
 # Requires: dokku@ key auth to the pi, and ~/.cf_api_token (see publish-route.sh).
 set -euo pipefail
 
-[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
-DOKKU="${ROOST_DOKKU_HOST:-dokku@192.168.0.103}"
-DOMAIN="${ROOST_DOMAIN:-jimmyhoughjr.net}"
 BIN="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "$BIN/roost-env.sh"
 
 NAME="" KIND="static" DIR=""
 while [[ $# -gt 0 ]]; do

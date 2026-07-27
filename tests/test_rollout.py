@@ -15,6 +15,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROLLOUT_SH = os.path.join(ROOT, "bin", "rollout.sh")
+ENV_SH = os.path.join(ROOT, "bin", "roost-env.sh")
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test",
@@ -49,6 +50,8 @@ class RolloutFixture(unittest.TestCase):
         os.makedirs(fixture_bin)
         self.rollout = os.path.join(fixture_bin, "rollout.sh")
         shutil.copy(ROLLOUT_SH, self.rollout)
+        # rollout.sh sources this sibling for the rc load + defaults.
+        shutil.copy(ENV_SH, os.path.join(fixture_bin, "roost-env.sh"))
 
         # A "statusgen clone" one commit behind its origin: upstream work1
         # pushes c1 and c2; the machine's clone (work2) is cloned at c1.

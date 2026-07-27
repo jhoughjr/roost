@@ -17,6 +17,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATUS_SH = os.path.join(ROOT, "bin", "status.sh")
+ENV_SH = os.path.join(ROOT, "bin", "roost-env.sh")
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test",
@@ -51,6 +52,8 @@ class StatusPublishFixture(unittest.TestCase):
         self.bin = os.path.join(self.tmp, "fixture", "bin")
         os.makedirs(self.bin)
         shutil.copy(STATUS_SH, os.path.join(self.bin, "status.sh"))
+        # status.sh sources this sibling for the rc load + defaults.
+        shutil.copy(ENV_SH, os.path.join(self.bin, "roost-env.sh"))
         self.write_exec("fleet-board.py",
                         "#!/usr/bin/env python3\n"
                         "import os, sys\n"
