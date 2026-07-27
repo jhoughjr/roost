@@ -209,7 +209,7 @@ echo "==> publishing route"
 
 echo "==> verifying"
 curl -s -o /dev/null -w "    LAN:    %{http_code}\n" -m 10 -H "Host: ${FQDN}" "http://${DOKKU#*@}/"
-for i in 1 2 3 4 5 6; do
+for _ in 1 2 3 4 5 6; do
   CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "https://${FQDN}/" || true)
   [[ "$CODE" == "200" ]] && break
   sleep 10

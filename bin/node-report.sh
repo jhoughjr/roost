@@ -14,6 +14,7 @@
 set -euo pipefail
 
 RC="$HOME/.roostrc"
+# shellcheck source=/dev/null
 [ -f "$RC" ] && . "$RC"
 
 KEY_FILE="$HOME/.roost_node_key"

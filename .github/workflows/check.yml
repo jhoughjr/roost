@@ -11,7 +11,7 @@ jobs:
       - name: bash syntax
         run: for f in bin/*.sh bin/roost; do bash -n "$f"; done
       - name: shellcheck
-        run: shellcheck -S warning bin/*.sh bin/roost || true
+        run: shellcheck -S warning bin/*.sh bin/roost
       - name: python compile
         run: python3 -m py_compile bin/*.py
       - name: python tests

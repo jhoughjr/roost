@@ -43,6 +43,7 @@ if ! command -v gh >/dev/null || ! command -v jq >/dev/null; then
 fi
 
 RC="$HOME/.roostrc"
+# shellcheck source=/dev/null
 [ -f "$RC" ] && . "$RC"
 
 KEY_FILE="$HOME/.roost_ci_key"
