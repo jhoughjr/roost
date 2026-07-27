@@ -56,6 +56,11 @@ ROOST_STATUS_SITE=$HOME/status-site
 # status runner — where `roost kick` fires the hourly deploy agent
 # ROOST_STATUS_RUNNER=you@your-ci-mac.local
 # ROOST_STATUS_AGENT=net.yourdomain.roost-status
+# rollout — machines `roost rollout` pulls roost+statusgen on after a merge
+# (space-separated ssh targets; defaults to ROOST_STATUS_RUNNER; set empty
+# for a single-machine setup). ROOST_CLONE = where roost lives on THIS machine.
+# ROOST_WRITERS=you@your-ci-mac.local
+# ROOST_CLONE=$HOME/repos/roost
 # roost prune — where your project repos live + extra artifact dir names
 # ROOST_PROJECTS_DIR=$HOME/repos
 # ROOST_PRUNE_EXTRA=coverage:.turbo
