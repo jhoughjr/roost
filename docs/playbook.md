@@ -292,6 +292,27 @@ logic lives in `roost/bin/status.sh` and the collectors in statusgen. See
 statusgen's INTERFACES.md for the full contract. (The old in-site
 `push-status.sh` / `update-status.sh` scripts are gone.)
 
+**Two writers must run the same code.** Where more than one machine runs
+`roost status` (a workstation plus the scheduled runner), a version skew
+between them regenerates boards differently and the two fight. After
+merging anything in roost or statusgen:
+
+```sh
+roost rollout          # ff-only pull of roost + statusgen here and on every ROOST_WRITERS machine
+roost rollout --kick   # ...and fire the runner's deploy right after
+```
+
+`ROOST_WRITERS` is a space-separated list of ssh targets (default: the
+`ROOST_STATUS_RUNNER` machine; set it empty on a single-machine setup).
+Each machine resolves its own clone paths from its own `~/.roostrc`, so
+the layouts don't have to match. A dirty or diverged clone is reported
+and left alone rather than force-updated, and the command exits non-zero
+so an incomplete rollout can't be mistaken for a finished one.
+
+`roost status` also fast-forwards its own clones at the start of every
+run, so the fleet converges on its own eventually — `roost rollout` is
+how you make that happen *now*, before the next scheduled push.
+
 ### Board schema
 
 The `board.json` data model lives in statusgen's BOARD_SCHEMA.md.

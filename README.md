@@ -31,6 +31,7 @@ diagnoses the setup when anything misbehaves.
 | `roost stats` | run the configured board-stat collectors |
 | `roost fleet` | refresh the fleet board json |
 | `roost kick` | fire the status runner's hourly deploy now |
+| `roost rollout [--kick]` | ff-only pull roost + statusgen on every writer machine after a merge |
 | `roost apps` / `ps [app]` / `logs <app> [-n N]` / `restart <app>` / `config <app> [K=V …]` | day-2 Dokku operations over ssh |
 | `roost prune [project] [--yes] [--deep] [--caches]` | reclaim build artifacts (dry-run by default) |
 | `roost backup` | pull pi data to `~/Backups/roost` |
@@ -46,6 +47,7 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 | Path | What |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | Prerequisites → first deploy: hardware, accounts, installs, tunnel |
+| [docs/tutorial.md](docs/tutorial.md) | Guided tour: deploy an app, board it, operate it — and which of the three repos to touch |
 | [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, disk reclaim, and every gotcha learned the hard way |
 | [docs/status-events.md](docs/status-events.md) | Design sketch (future): push-based CI → central ingest → boards + history |
 | [bin/roost](bin/roost) | The dispatcher — every command above |
