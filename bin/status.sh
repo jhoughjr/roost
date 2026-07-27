@@ -11,7 +11,8 @@
 set -euo pipefail
 
 BIN="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
+# shellcheck source=/dev/null
+. "$BIN/roost-env.sh"
 SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
 SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
 DOCS="${ROOST_DOCS:-$HOME/repos/docs}"
@@ -202,4 +203,4 @@ fi
 # push is always canonical-mirror + freshly regenerated boards.
 git push --force dokku main
 git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-fatal)"
-echo "✓ status deployed — https://status.jimmyhoughjr.net/"
+echo "✓ status deployed — https://status.${ROOST_DOMAIN}/"

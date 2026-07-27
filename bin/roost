@@ -19,9 +19,8 @@
 #   roost ui                                     full-screen terminal (console, monitor, config, docs tabs)
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
-DOKKU="${ROOST_DOKKU_HOST:-dokku@192.168.0.103}"
-DOMAIN="${ROOST_DOMAIN:-jimmyhoughjr.net}"
+# shellcheck source=/dev/null
+. "$BIN/roost-env.sh"
 STATUS_SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
 
 cmd="${1:-help}"; shift || true
@@ -57,8 +56,8 @@ case "$cmd" in
     # Fire the status runner's LaunchAgent now instead of waiting out the hour
     # (e.g. right after merging a site or board change on GitHub). No -k: never
     # kill a deploy already in flight — if one is running, that's the goal met.
-    RUNNER="${ROOST_STATUS_RUNNER:-jimmyhoughjr@jimmys-mac-mini.local}"
-    AGENT="${ROOST_STATUS_AGENT:-net.jimmyhoughjr.roost-status}"
+    RUNNER="$ROOST_STATUS_RUNNER"
+    AGENT="$ROOST_STATUS_AGENT"
     echo "kicking $AGENT on $RUNNER"
     exec ssh -o BatchMode=yes -o ConnectTimeout=8 "$RUNNER" "launchctl kickstart gui/\$(id -u)/$AGENT"
     ;;
@@ -111,7 +110,7 @@ case "$cmd" in
 
     if [ "$fail" -eq 0 ]; then echo; echo "✓ roost is healthy"; else echo; echo "✗ problems found — fix the ✗ lines above"; exit 1; fi
     ;;
-  help|*)
+  help)
     if [ -t 1 ]; then R=$'\033[31m' Y=$'\033[33m' B=$'\033[1m' D=$'\033[2m' X=$'\033[0m'; else R='' Y='' B='' D='' X=''; fi
     printf '%s\n' \
       "   ${R},,,${X}" \
@@ -122,5 +121,21 @@ case "$cmd" in
       "═════════"
     echo
     sed -n '4,19p' "$0" | sed 's/^# \{0,1\}//'
+    echo
+    echo "  anything else dispatches to roost-<cmd> (PATH, then \$ROOST_STATUSGEN/bin)"
+    ;;
+  *)
+    # Plugin dispatch (roost#14): an unrecognized command looks for
+    # roost-$cmd on PATH first, then in statusgen's bin — so statusgen can
+    # ship board-shaped commands itself and roost core can eventually stop
+    # knowing its internals.
+    SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
+    if command -v "roost-$cmd" >/dev/null 2>&1; then
+      exec "roost-$cmd" "$@"
+    elif [ -x "$SGEN/bin/roost-$cmd" ]; then
+      exec "$SGEN/bin/roost-$cmd" "$@"
+    fi
+    echo "roost: unknown command '$cmd' — run 'roost help' (plugins: roost-$cmd on PATH or in $SGEN/bin)" >&2
+    exit 2
     ;;
 esac

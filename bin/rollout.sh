@@ -23,7 +23,8 @@ set -euo pipefail
 
 BIN="$(cd "$(dirname "$0")" && pwd)"
 ROOST_DIR="$(cd "$BIN/.." && pwd)"
-[ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
+# shellcheck source=/dev/null
+. "$BIN/roost-env.sh"
 
 KICK=""
 for arg in "$@"; do
@@ -36,7 +37,7 @@ done
 
 # ${VAR-default} (not :-): an explicitly EMPTY ROOST_WRITERS means "no remote
 # machines", e.g. a single-machine setup or the tests.
-WRITERS="${ROOST_WRITERS-${ROOST_STATUS_RUNNER:-jimmyhoughjr@jimmys-mac-mini.local}}"
+WRITERS="${ROOST_WRITERS-$ROOST_STATUS_RUNNER}"
 
 # One pull script, run verbatim both locally and over ssh, so each machine
 # resolves clone paths from its own rc. Single-quoted: expands on the target.
