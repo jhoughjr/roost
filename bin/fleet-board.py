@@ -9,22 +9,13 @@ Usage: fleet-board.py [output-path]   (default: ~/status-site/fleet/board.json)
 """
 import json, os, re, subprocess, sys, datetime
 
-def _rc():
-    cfg = {}
-    try:
-        for line in open(os.path.expanduser("~/.roostrc")):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                cfg[k.strip()] = os.path.expandvars(v.strip())
-    except OSError:
-        pass
-    return cfg
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import roostlib  # noqa: E402
 
-_RC = _rc()
-DOKKU = _RC.get("ROOST_DOKKU_HOST", "dokku@192.168.0.103")
+_RC = roostlib.read_rc()
+DOKKU = roostlib.rc("ROOST_DOKKU_HOST")
 HOST_IP = DOKKU.split("@")[-1]
-DOMAIN = _RC.get("ROOST_DOMAIN", "jimmyhoughjr.net")
+DOMAIN = roostlib.rc("ROOST_DOMAIN")
 METRIC_APP = _RC.get("ROOST_METRIC_APP", "vault")  # host metrics via `run`
 STATUS_SITE = os.path.expanduser(_RC.get("ROOST_STATUS_SITE", "~/status-site"))
 EXPECTED = {}

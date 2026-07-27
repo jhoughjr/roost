@@ -142,11 +142,17 @@ DOCKER
     ;;
   board)
     printf 'FROM nginx:alpine\nCOPY . /usr/share/nginx/html\n' > "$DIR/Dockerfile"
-    printf '.git\n_assets/\n' > "$DIR/.dockerignore"
-    mkdir -p "$DIR/_assets"
-    # TODO: copy board.js and board.css from statusgen repo
-    # For now, this template scaffolds the structure; see playbook §7
-    cat > "$DIR/board.json" <<'JSON'
+    printf '.git\n' > "$DIR/.dockerignore"
+    # The renderer (_assets/board.{js,css}) comes from statusgen — same script
+    # `roost status` uses to keep the live site's copy in lockstep.
+    SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
+    if [ -x "$SGEN/bin/sync-renderer.sh" ]; then
+      "$SGEN/bin/sync-renderer.sh" "$DIR"
+    else
+      mkdir -p "$DIR/_assets"
+      echo "warn: statusgen not found at $SGEN (set ROOST_STATUSGEN) — the board will 404 until you copy _assets/{board.js,board.css} in" >&2
+    fi
+    cat > "$DIR/board.json" <<JSON
 {
   "title": "${NAME}",
   "eyebrow": "${FQDN}",
@@ -167,15 +173,13 @@ DOCKER
   ]
 }
 JSON
-    cat > "$DIR/index.html" <<'HTML'
+    cat > "$DIR/index.html" <<HTML
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PLACEHOLDER</title>
-  <!-- TODO: update board.css + board.js paths to match your setup (e.g., from statusgen repo or a CDN) -->
-  <!-- For now, see playbook §7 for full setup steps. -->
+  <title>${NAME}</title>
   <link rel="stylesheet" href="/_assets/board.css" />
 </head>
 <body>
@@ -204,7 +208,7 @@ echo "==> publishing route"
 "$BIN/publish-route.sh" "$NAME"
 
 echo "==> verifying"
-curl -s -o /dev/null -w "    LAN:    %{http_code}\n" -m 10 -H "Host: ${FQDN}" http://192.168.0.103/
+curl -s -o /dev/null -w "    LAN:    %{http_code}\n" -m 10 -H "Host: ${FQDN}" "http://${DOKKU#*@}/"
 for i in 1 2 3 4 5 6; do
   CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "https://${FQDN}/" || true)
   [[ "$CODE" == "200" ]] && break
@@ -227,7 +231,7 @@ if [[ "$KIND" != "board" ]]; then
 EOF2
 else
   cat <<EOF2
-           board setup     → copy _assets/{board.js,board.css} from statusgen (playbook §7)
-           then edit       → board.json to add your sections + git push dokku main
+           board sections  → edit board.json + git push dokku main (schema: statusgen/BOARD_SCHEMA.md)
+           renderer update → \$ROOST_STATUSGEN/bin/sync-renderer.sh ${DIR} + push
 EOF2
 fi

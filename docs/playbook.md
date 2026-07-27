@@ -234,9 +234,11 @@ Create a new repo that runs statusgen as its deployed service:
 ~/repos/roost/bin/new-app.sh myapp --board
 ```
 
-This scaffolds a minimal statusgen board app with:
+This scaffolds a complete statusgen board app with:
 - `board.json` (starter template, edit to your metrics)
-- `index.html` (loads the shared statusgen renderer from cdn)
+- `index.html` (board shell, loads the renderer from `_assets/`)
+- `_assets/board.{js,css}` (renderer copied from your statusgen clone via
+  `sync-renderer.sh`; re-run it and push to pick up renderer updates)
 - nginx Dockerfile (serve static assets)
 
 Then:
@@ -315,7 +317,8 @@ Three timescales, all part of Roost:
   report the exec scope, not the app.
 - **History board** — evolution: every status push, generated from git.
 
-Alerting: `roost/bin/fleet-alert.py` runs every 15 minutes via launchd and
+Alerting: `roost/bin/fleet-alert.py` runs every 15 minutes via launchd
+(install once per Mac with `bin/install-fleet-alert.sh`) and
 sends a desktop notification when an app stops serving 200 or disk/memory
 cross thresholds — state-transition based, so it alerts once per incident,
 not every 15 minutes.
