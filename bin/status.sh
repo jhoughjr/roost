@@ -177,9 +177,19 @@ git commit -q -m "status: ${MSG} ($(date +%F))" || echo "nothing new to commit"
 # the next run regenerate on top of it.
 if git fetch -q origin 2>/dev/null; then
   if ! git rebase -q origin/main; then
-    echo "note: rebase conflict — adopting origin/main (boards regenerate next run)"
     git rebase --abort >/dev/null 2>&1 || true
     git reset -q --hard origin/main
+    # The dropped commit was derived boards + the status message, so the cure
+    # is regenerate-on-top-of-whoever-won, not merge: adopt origin/main and
+    # re-run the whole pipeline once. Losing a second race in the same run
+    # means the window is hot — then fail LOUDLY instead of printing
+    # "deployed" over a discarded commit (roost#27).
+    if [ -z "${ROOST_STATUS_RETRIED:-}" ]; then
+      echo "note: rebase conflict (concurrent writer) — adopted origin/main, regenerating on top of it"
+      ROOST_STATUS_RETRIED=1 ROOST_SELF_UPDATED=1 exec "$BIN/status.sh" ${1+"$@"}
+    fi
+    echo "✗ status NOT posted: rebase conflict again after retry (two-writer race) — run roost status again" >&2
+    exit 1
   fi
 else
   echo "note: mirror fetch failed (non-fatal) — pushing local state"
