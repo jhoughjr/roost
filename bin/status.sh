@@ -79,16 +79,30 @@ if [ -d "$SITE/.git/rebase-merge" ] || [ -d "$SITE/.git/rebase-apply" ]; then
   fi
 fi
 
-# Pull site from dokku (primary remote for this machine).
+# Pull site from origin (GitHub, the canonical mirror — see the publish
+# step below for why dokku is deliberately NOT trusted as a source). Every
+# writer's push, hand-typed lede or scheduled refresh, lands on origin;
+# regenerating from a checkout that's missing one means our force-push to
+# dokku overwrites it outright. Bit the mini's scheduled refresh twice
+# (2026-07-26, 2026-07-29): a hand lede deployed minutes earlier got
+# steamrolled by a run that started from a stale local checkout. Falls back
+# to dokku (LAN, usually reachable even when GitHub isn't) so a WAN blip
+# doesn't stall the run — regenerating from *some* remote beats regenerating
+# from whatever this clone happened to have sitting around.
 if [ -z "${ROOST_STATUS_DRYRUN:-}" ]; then
-  if git -C "$SITE" pull --rebase dokku main 2>/dev/null; then
-    echo "✓ site: fresh (dokku/main)"
+  if git -C "$SITE" fetch -q origin 2>/dev/null && git -C "$SITE" rebase -q origin/main 2>/dev/null; then
+    echo "✓ site: fresh (origin/main)"
   else
-    echo "note: site pull failed (conflict?) — adopting dokku/main (boards regenerate next run)"
-    git -C "$SITE" reset --hard dokku/main 2>/dev/null || echo "note: site reset failed (remote may be unreachable)"
+    git -C "$SITE" rebase --abort >/dev/null 2>&1 || true
+    if git -C "$SITE" pull --rebase dokku main 2>/dev/null; then
+      echo "note: site pull from origin failed (offline or conflict) — fresh via dokku/main instead"
+    else
+      echo "note: site pull failed from both origin and dokku (conflict?) — adopting dokku/main (boards regenerate next run)"
+      git -C "$SITE" reset --hard dokku/main 2>/dev/null || echo "note: site reset failed (remote may be unreachable)"
+    fi
   fi
 else
-  echo "note: [dry-run] site would pull --rebase dokku main"
+  echo "note: [dry-run] site would pull --rebase origin main (falling back to dokku/main)"
 fi
 
 # Pull statusgen (renderer library).
@@ -193,7 +207,15 @@ if git fetch -q origin 2>/dev/null; then
     exit 1
   fi
 else
-  echo "note: mirror fetch failed (non-fatal) — pushing local state"
+  # Can't confirm this commit sits on top of the canonical mirror, so we
+  # can't trust that force-pushing dokku won't steamroll a writer whose
+  # push we never saw — the exact failure that bit the mini's scheduled
+  # refresh twice (2026-07-26, 2026-07-29): "mirror fetch failed (non-fatal)
+  # — pushing local state" used to mean push-anyway. A missed cycle is
+  # recoverable; an overwritten hand lede isn't, so fail loudly instead of
+  # guessing (same idiom as the rebase-conflict retry above, roost#27).
+  echo "✗ status NOT posted: mirror fetch failed (offline?) — refusing to push over an unverified base; run roost status again" >&2
+  exit 1
 fi
 # Dokku is a deploy SINK, not a source: nothing ever merges back from it and
 # the GitHub mirror is canonical. When an hourly run's mirror push loses a

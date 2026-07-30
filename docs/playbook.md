@@ -313,6 +313,15 @@ so an incomplete rollout can't be mistaken for a finished one.
 run, so the fleet converges on its own eventually — `roost rollout` is
 how you make that happen *now*, before the next scheduled push.
 
+**The site clone pulls origin, not dokku, before regenerating.** Dokku is
+a deploy sink (see below) — pulling it as if it were a source let a
+scheduled refresh regenerate from a checkout that never saw another
+writer's hand lede, then force-push over it (bit the mini twice:
+2026-07-26, 2026-07-29). `roost status` now pulls `origin/main` first
+(falling back to dokku only if GitHub is unreachable), and refuses to
+publish — exits non-zero rather than force-pushing — if it can't confirm
+its commit sits on top of the mirror right before the final push.
+
 ### Board schema
 
 The `board.json` data model lives in statusgen's BOARD_SCHEMA.md.
