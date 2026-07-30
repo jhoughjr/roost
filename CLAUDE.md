@@ -39,6 +39,13 @@ contract is `statusgen/INTERFACES.md` — in that repo, not here.
   --ff-only` + re-exec, guarded by `ROOST_SELF_UPDATED`) before
   collecting, then force-pushes the status site to dokku — dokku is a
   deploy *sink*; the GitHub mirror is canonical.
+- Because dokku is a sink, the site clone's start-of-run freshness pull
+  targets `origin`, not dokku (dokku is only a fallback if GitHub is
+  unreachable) — and if the pre-push fetch of `origin` fails, the run
+  aborts rather than force-pushing dokku from an unverified base. Both
+  guard the same failure: regenerating from a stale local checkout and
+  steamrolling another writer's push (bit the mini twice, 2026-07-26 and
+  2026-07-29 — see `tests/test_status_publish.py`).
 - `TODO.md` items (`- item -- detail`) render publicly on the Fleet
   board — don't park scratch notes there.
 - `roost ui`'s console whitelists commands (`PASSTHROUGH` in
