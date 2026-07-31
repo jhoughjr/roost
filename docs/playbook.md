@@ -211,6 +211,50 @@ location @signin { return 302 /signin.html?to=$request_uri; }
 - Cost: one subrequest to vault per asset request. Fine for small sites;
   add auth-response caching keyed on the session cookie if it ever hurts.
 
+### Kiosk token: unattended displays through the gate
+
+TVs and signage can't hold OAuth sessions (passkeys don't run in embedded
+web views at all). Vault accepts a static kiosk token on the org probe,
+scoped to exactly one org gate — nothing else in vault answers to it, and
+the env stores only the hash. Requires vault-hb ≥ the `kiosk-token` change.
+
+1. Mint a token and hash it; give vault the **hash**:
+
+   ```sh
+   TOKEN=$(openssl rand -hex 24); echo "token: $TOKEN"
+   HASH=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
+   ssh dokku@192.168.0.103 config:set vault KIOSK_TOKENS=$HASH:austin-macworks
+   ```
+
+2. Teach the gated site's nginx to forward it — query param on the first
+   hit, cookie afterwards (the gate runs per asset; params don't ride
+   along to CSS/JS/`board.json`):
+
+   ```nginx
+   # server level, above the locations
+   set $kiosk_token $cookie_kiosk;
+   set $kiosk_setcookie "";
+   if ($arg_kiosk != "") {
+     set $kiosk_token $arg_kiosk;
+     set $kiosk_setcookie "kiosk=$arg_kiosk; Path=/; Max-Age=31536000; Secure; HttpOnly";
+   }
+
+   # inside location = /_vault_auth, next to the other proxy_set_header lines
+   proxy_set_header X-Kiosk-Token $kiosk_token;
+
+   # inside location /
+   add_header Set-Cookie $kiosk_setcookie;   # empty value → header omitted
+   ```
+
+3. Point the display at `https://status.jimmyhoughjr.net/?kiosk=$TOKEN`
+   (e.g. an SVS page item). The renderer session chip stays empty — right
+   for a kiosk.
+
+Notes: rotate by replacing the env value (old token dies instantly);
+the gate still fails closed when vault is down; the plaintext token
+appears in the site's nginx access log on first hit — org-scoped
+read-only access keeps that tolerable, rotation keeps it cheap.
+
 ## 7. Status boards — the blessed component
 
 **statusgen** is Roost's supported status-board solution: a standalone
