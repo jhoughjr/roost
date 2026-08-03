@@ -84,6 +84,10 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_TAPO_DEVICES=opi=192.168.0.27,fridge=192.168.0.57,room=192.168.0.201
 # ROOST_TAPO_FLEET=opi                     # plug powering this box → wattsW
 # ROOST_TAPO_INTERVAL=30                   # --watch seconds (default 30)
+# Bulbs can be listed too — they have no current sensor, so their watts are
+# brightness × the rated draw below, flagged `derived` and never summed into
+# a measured total. 8.7 W is the L530/L530E rating.
+# ROOST_TAPO_BULB_W=8.7
 # pulse base URL — `roost ui` monitor tab + node/fleet tooling
 # ROOST_PULSE_URL=https://pulse.yourdomain.net
 
