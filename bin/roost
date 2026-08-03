@@ -5,6 +5,7 @@
 #   roost route <subdomain>                      publish a tunnel route
 #   roost fleet                                  refresh the fleet board json
 #   roost stats                                  run configured board-stat collectors
+#   roost tapo [--json|--watch|--discover]       read Tapo smart plugs (wall watts)
 #   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
 #   roost kick                                   run the status runner's hourly deploy now
@@ -28,6 +29,7 @@ case "$cmd" in
   new)    exec "$BIN/new-app.sh" "$@" ;;
   route)  exec "$BIN/publish-route.sh" "$@" ;;
   fleet)  exec "$BIN/fleet-board.py" "$@" ;;
+  tapo)   exec "$BIN/tapo-poll.py" "$@" ;;
   stats)
     SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
     [ -d "$SGEN/bin/collect" ] || { echo "roost stats: statusgen not found at $SGEN (set ROOST_STATUSGEN)"; exit 1; }
@@ -120,7 +122,7 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,20p' "$0" | sed 's/^# \{0,1\}//'
     echo
     echo "  anything else dispatches to roost-<cmd> (PATH, then \$ROOST_STATUSGEN/bin)"
     ;;

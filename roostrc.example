@@ -71,10 +71,19 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
 
 # node-report (per-node telemetry → pulse /api/nodes; key in ~/.roost_node_key)
-# macOS and Linux; on Linux set the watts by hand — there's no macmon there.
+# macOS and Linux. Measured watts come from macmon (Apple silicon) or, on Linux,
+# a Tapo plug via tapo-poll (below); idle/max are the fallback model only.
 # ROOST_NODE_NAME=my-macbook               # default: ComputerName / hostname
-# ROOST_NODE_IDLE_W=7                      # power model inputs when macmon
-# ROOST_NODE_MAX_W=40                      #   isn't available (Intel, Linux)
+# ROOST_NODE_IDLE_W=7                      # power model inputs when no measured
+# ROOST_NODE_MAX_W=40                      #   source exists (Intel, bare Linux)
+
+# tapo-poll — TP-Link Tapo devices over the local KLAP API (no cloud, no Matter
+# controller, works on the Matter "M" models). Password in ~/.tapo_pass (600).
+# Find IPs with `roost tapo --discover` — that needs no credentials.
+# ROOST_TAPO_EMAIL=you@example.com
+# ROOST_TAPO_DEVICES=opi=192.168.0.27,fridge=192.168.0.57,room=192.168.0.201
+# ROOST_TAPO_FLEET=opi                     # plug powering this box → wattsW
+# ROOST_TAPO_INTERVAL=30                   # --watch seconds (default 30)
 # pulse base URL — `roost ui` monitor tab + node/fleet tooling
 # ROOST_PULSE_URL=https://pulse.yourdomain.net
 
