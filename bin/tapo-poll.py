@@ -239,6 +239,11 @@ def post_pulse(payload, pulse):
     req = urllib.request.Request(f"{pulse}/api/tapo", data=body, method="POST")
     req.add_header("content-type", "application/json")
     req.add_header("x-roost-node-key", key)
+    # Cloudflare sits in front of pulse and 403s urllib's default
+    # "Python-urllib/3.x" agent outright — verified: same URL, same key, same
+    # body, 403 as Python-urllib and 200 as anything else. node-report never hit
+    # this because it posts with curl. Identify honestly instead.
+    req.add_header("user-agent", "roost-tapo-poll/1 (+https://github.com/jhoughjr/roost)")
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             return f"pulse {r.status}"
@@ -313,10 +318,18 @@ async def watch(handles, creds, cfg):
     """One event loop, one KLAP session per device, for the life of the process.
     The pulse POST goes to a thread — a slow edge must not delay the next read
     or stall the cache node-report depends on."""
+    last = None
     while True:
         payload = await read_all(handles, creds, cfg)
         write_cache(payload)
-        await asyncio.to_thread(post_pulse, payload, cfg["pulse"])
+        result = await asyncio.to_thread(post_pulse, payload, cfg["pulse"])
+        # Log on change only: a healthy loop stays silent, but a POST that
+        # starts failing lands in the journal instead of vanishing. Throwing
+        # this result away is how a Cloudflare 403 survived a whole deploy
+        # looking like success.
+        if result != last:
+            print(f"tapo-poll: {result}", file=sys.stderr, flush=True)
+            last = result
         await asyncio.sleep(cfg["interval"])
 
 
