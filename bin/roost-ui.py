@@ -56,7 +56,8 @@ PULSE = roostlib.rc("ROOST_PULSE_URL")
 # `prune` stays console-less on purpose: its du sweep over every repo can run
 # minutes and the console is a bad place to sit through that — use a shell.
 PASSTHROUGH = ["apps", "ps", "logs", "restart", "config", "status",
-               "fleet", "stats", "doctor", "backup", "new", "route", "kick"]
+               "fleet", "stats", "doctor", "backup", "new", "route", "kick",
+               "tapo"]
 INTERNAL = ["playbook", "start", "todo", "help", "clear", "quit",
             "monitor", "docs"]
 ALL_CMDS = sorted(set(PASSTHROUGH + INTERNAL))
@@ -78,6 +79,7 @@ CMD_DESC = {
     "new": "scaffold and deploy a new app",
     "route": "publish a tunnel route",
     "kick": "run the status runner's deploy now",
+    "tapo": "read Tapo smart plugs (wall watts)",
     "playbook": "browse the operating manual",
     "start": "browse getting-started.md",
     "todo": "show TODO.md",

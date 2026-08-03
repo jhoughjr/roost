@@ -15,6 +15,12 @@
 #   ROOST_NODE_IDLE_W  idle watts (default: 5  — Apple-silicon Mac mini/laptop)
 #   ROOST_NODE_MAX_W   full-tilt watts (default: 40 — M-series mini under load)
 #   ROOST_PULSE_URL    pulse base URL (default: https://pulse.jimmyhoughjr.net)
+#
+# Measured watts (`wattsW`) beat the idleW/maxW model whenever a source exists:
+# macmon on Apple silicon, and on Linux a Tapo smart plug via tapo-poll.py's
+# ~/.roost-tapo.json cache. Neither present → the field is omitted and pulse
+# falls back to the estimate, which watts' roost page marks with a `~`.
+#
 # Shared key: ~/.roost_node_key (chmod 600), must match `dokku config pulse NODE_KEY`.
 set -euo pipefail
 
@@ -134,10 +140,24 @@ if [ -n "${IFACE:-}" ] && [ -n "${IP:-}" ]; then
   NET_JSON=",\"ip\":\"$IP\",\"iface\":\"$IFACE\",\"netRxB\":${RX_B:-0},\"netTxB\":${TX_B:-0}"
 fi
 
-# No sudoless system-power sensor on these boards (the Pi PMIC doesn't expose
-# one), so wattsW is never sent and pulse falls back to the idleW/maxW load
-# estimate — the `~` on the roost page is accurate here, not a gap to fill.
+# These boards have no sudoless system-power sensor (the Pi PMIC doesn't expose
+# one), so the watts come from the wall instead: a Tapo P110M smart plug, read
+# over the local KLAP API by tapo-poll.py, which caches the reading here. That
+# is a strictly better number than macmon gives a Mac — it's true wall draw
+# including the PSU, not an on-die estimate.
+#
+# Ignore a cache older than 120 s (pulse's own node-liveness window): a wedged
+# or stopped poller must fall back to the idleW/maxW estimate, not pin the graph
+# to the last watts it ever saw. Absent cache = no field = estimate, as before.
 WATTS_JSON=""
+TAPO_CACHE="$HOME/.roost-tapo.json"
+if [ -r "$TAPO_CACHE" ]; then
+  TAPO_T=$(grep -oE '"t":[0-9]+' "$TAPO_CACHE" | head -1 | cut -d: -f2 || true)
+  TAPO_W=$(grep -oE '"fleetWatts":[0-9.]+' "$TAPO_CACHE" | head -1 | cut -d: -f2 || true)
+  if [ -n "$TAPO_T" ] && [ -n "$TAPO_W" ] && [ $(( $(date +%s) - TAPO_T )) -lt 120 ]; then
+    WATTS_JSON=",\"wattsW\":$TAPO_W"
+  fi
+fi
 
 # Power source: a box with no battery power_supply is mains-fed, which is what
 # a Mac desktop reports as "ac". Battery-backed Linux (laptop, UPS-as-battery)
