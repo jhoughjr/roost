@@ -84,6 +84,11 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_TAPO_DEVICES=opi=192.168.0.27,fridge=192.168.0.57,room=192.168.0.201
 # ROOST_TAPO_FLEET=opi                     # plug powering this box → wattsW
 # ROOST_TAPO_INTERVAL=30                   # --watch seconds (default 30)
+# Which plug feeds which. A child is downstream of its parent, so the parent's
+# meter already includes it and only roots are summed — without this, every
+# sub-metered device is counted twice (invisible at idle, ~1500 W off when the
+# kettle runs). Leave unset if every plug is on its own circuit.
+# ROOST_TAPO_PARENT=fridge=room,opi=room,induction=room
 # Bulbs can be listed too — they have no current sensor, so their watts are
 # brightness × the rated draw below, flagged `derived` and never summed into
 # a measured total. 8.7 W is the L530/L530E rating.
