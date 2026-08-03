@@ -222,7 +222,10 @@ def write_cache(payload):
     a half-written file."""
     tmp = f"{CACHE}.tmp"
     with open(tmp, "w") as f:
-        json.dump(payload, f)
+        # Compact separators on purpose: node-report.sh greps this file with a
+        # plain ERE (no jq on the opi), and json.dump's default `", "` / `": "`
+        # would put a space after every colon that a naive pattern misses.
+        json.dump(payload, f, separators=(",", ":"))
     os.replace(tmp, CACHE)
 
 

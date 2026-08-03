@@ -152,8 +152,11 @@ fi
 WATTS_JSON=""
 TAPO_CACHE="$HOME/.roost-tapo.json"
 if [ -r "$TAPO_CACHE" ]; then
-  TAPO_T=$(grep -oE '"t":[0-9]+' "$TAPO_CACHE" | head -1 | cut -d: -f2 || true)
-  TAPO_W=$(grep -oE '"fleetWatts":[0-9.]+' "$TAPO_CACHE" | head -1 | cut -d: -f2 || true)
+  # Tolerate whitespace after the colon: tapo-poll writes compact JSON, but a
+  # hand-edited or reformatted cache must still parse rather than silently
+  # falling back to the estimate (which is exactly what it did the first time).
+  TAPO_T=$(grep -oE '"t": *[0-9]+' "$TAPO_CACHE" | head -1 | tr -dc '0-9' || true)
+  TAPO_W=$(grep -oE '"fleetWatts": *[0-9.]+' "$TAPO_CACHE" | head -1 | tr -dc '0-9.' || true)
   if [ -n "$TAPO_T" ] && [ -n "$TAPO_W" ] && [ $(( $(date +%s) - TAPO_T )) -lt 120 ]; then
     WATTS_JSON=",\"wattsW\":$TAPO_W"
   fi
