@@ -30,6 +30,11 @@ Config, via ~/.roostrc KEY=VALUE lines:
   ROOST_TAPO_FLEET     label of the plug powering THIS box (default: opi); its
                        watts land in the cache as `fleetWatts` for node-report
   ROOST_TAPO_INTERVAL  --watch seconds (default 30, matching node-report)
+  ROOST_TAPO_PARENT    comma list of `child=parent` saying which plug feeds
+                       which, e.g. fridge=room,opi=room,induction=room. A child
+                       is physically downstream, so the parent's meter ALREADY
+                       includes it — only roots are summed into totalWatts.
+                       Omitting this double-counts every sub-metered device.
   ROOST_TAPO_BULB_W    dimmable bulb's rated draw at 100% (default 8.7, the
                        L530/L530E figure) — bulbs have no current sensor, so
                        their wattage is brightness × this, flagged `derived`
@@ -105,12 +110,38 @@ def config():
         "targets": targets,
         "fleet": cfg.get("ROOST_TAPO_FLEET", "opi").strip(),
         "interval": max(5, int(cfg.get("ROOST_TAPO_INTERVAL", "30") or 30)),
+        # Which plug feeds which. Everything except the bulbs hangs off one
+        # outlet here, so summing every plug counts the same joules twice —
+        # invisibly at idle, and by ~1500 W the moment the kettle runs. A
+        # device with a parent is INSIDE its parent's reading; only roots are
+        # summed. See parents().
+        "parents": parents(cfg),
         # Rated draw of a dimmable bulb at 100%, used for the derived wattage.
         # 8.7 W is the L530/L530E figure; a mixed set of bulbs would need this
         # per-device, which is a change worth making only once that's true.
         "bulbW": float(cfg.get("ROOST_TAPO_BULB_W", "8.7") or 8.7),
         "pulse": cfg.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/"),
     }
+
+
+def parents(cfg):
+    """`child=parent` map from ROOST_TAPO_PARENT, e.g. fridge=room,opi=room.
+
+    A child plug is physically downstream of its parent, so the parent's meter
+    already includes it. Roots are what you sum; children are a breakdown of
+    where a root's watts went, and the difference between a root and its
+    children is the unmetered rest of that circuit.
+    """
+    out = {}
+    for pair in (cfg.get("ROOST_TAPO_PARENT", "") or "").split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            sys.exit(f"tapo-poll: ROOST_TAPO_PARENT entry {pair!r} is not child=parent")
+        child, parent = pair.split("=", 1)
+        out[child.strip()] = parent.strip()
+    return out
 
 
 def energy_module(dev):
@@ -269,8 +300,19 @@ async def read_all(handles, creds, cfg):
          if d["label"] == cfg["fleet"] and d.get("watts") is not None and not d.get("derived")),
         None,
     )
+    # Record the topology on each device so every consumer downstream can get
+    # the same sum right without re-deriving it.
+    for d in devices:
+        p = cfg["parents"].get(d["label"])
+        if p:
+            d["parent"] = p
+
+    # Sum ROOTS only. A child plug sits downstream of its parent, so the
+    # parent's meter already counted it; adding both bills the same watts
+    # twice. Invisible while the children idle, ~1500 W wrong when the kettle
+    # runs. Derived (bulb) figures stay out of measured totals entirely.
     total = sum(d["watts"] for d in devices
-                if d.get("watts") is not None and not d.get("derived"))
+                if d.get("watts") is not None and not d.get("derived") and not d.get("parent"))
     return {
         "t": int(time.time()),
         "fleetLabel": cfg["fleet"],
@@ -317,20 +359,40 @@ def post_pulse(payload, pulse):
 
 
 def render(payload):
-    rows = []
-    for d in payload["devices"]:
+    devs = payload["devices"]
+
+    def line(d, depth):
+        pad = "  " * depth
         if d.get("err"):
-            rows.append(f"  {d['label']:<12} {d['ip']:<15} ERROR  {d['err']}")
-            continue
+            return f"  {pad}{d['label']:<12} {d['ip']:<15} ERROR  {d['err']}"
         w = d.get("watts")
         # "~" marks a derived (bulb) figure, so the table can't be misread as
-        # four measurements when one of them is arithmetic.
+        # measurements when one of them is arithmetic.
         watts = f"{'~' if d.get('derived') else ' '}{w:>6.2f} W" if w is not None else "      — "
         today = f" {d['kwhToday']:>6.3f} kWh today" if d.get("kwhToday") is not None else ""
-        rows.append(
-            f"  {d['label']:<12} {d['ip']:<15} {'on ' if d.get('on') else 'off'} "
-            f"{watts}{today}  {d.get('alias') or ''}"
-        )
+        return (f"  {pad}{d['label']:<12} {d['ip']:<15} {'on ' if d.get('on') else 'off'} "
+                f"{watts}{today}  {d.get('alias') or ''}")
+
+    # Draw the wiring: each root, then its children indented beneath it, then
+    # what is left on that circuit. A reader has to be able to see that the
+    # children are part of the parent rather than additional to it.
+    rows, seen = [], set()
+    for root in [d for d in devs if not d.get("parent")]:
+        rows.append(line(root, 0))
+        seen.add(id(root))
+        kids = [d for d in devs if d.get("parent") == root["label"]]
+        for k in kids:
+            rows.append(line(k, 1))
+            seen.add(id(k))
+        metered = [k for k in kids if k.get("watts") is not None]
+        if metered and root.get("watts") is not None:
+            rest = root["watts"] - sum(k["watts"] for k in metered)
+            rows.append(f"    {'(unmetered)':<12} {'':<15}    {rest:>7.2f} W  rest of {root['label']}")
+    # Anything whose parent is missing from the config still has to appear.
+    for d in devs:
+        if id(d) not in seen:
+            rows.append(line(d, 0))
+
     head = f"tapo — {payload['totalWatts']:.2f} W metered"
     if payload.get("fleetWatts") is not None:
         head += f", fleet({payload['fleetLabel']}) {payload['fleetWatts']:.2f} W"
