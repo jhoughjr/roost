@@ -49,6 +49,7 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 | [docs/getting-started.md](docs/getting-started.md) | Prerequisites → first deploy: hardware, accounts, installs, tunnel |
 | [docs/tutorial.md](docs/tutorial.md) | Guided tour: deploy an app, board it, operate it — and which of the three repos to touch |
 | [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, disk reclaim, and every gotcha learned the hard way |
+| [homeauto](https://github.com/jhoughjr/homeauto) | Smart plugs, bulbs and Home Assistant: wiring, credential locations, rebuild-from-nothing plan (separate repo) |
 | [docs/status-events.md](docs/status-events.md) | Design sketch (future): push-based CI → central ingest → boards + history |
 | [bin/roost](bin/roost) | The dispatcher — every command above |
 | [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify |
