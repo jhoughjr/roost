@@ -27,12 +27,39 @@ grep -q '^ROOST_TAPO_EMAIL=' "$HOME/.roostrc" 2>/dev/null \
 grep -q '^ROOST_TAPO_DEVICES=' "$HOME/.roostrc" 2>/dev/null \
   || { echo "install: set ROOST_TAPO_DEVICES in ~/.roostrc first" >&2; exit 1; }
 
+# Two ways to get the venv, because `python3 -m venv` is not dependable on the
+# boxes this runs on: Debian/Ubuntu split ensurepip into python3-venv, so on the
+# opi `import venv` succeeds while actually creating one fails — and there is no
+# passwordless sudo there to apt-install the missing piece. uv needs no root and
+# no ensurepip, so it is the fallback (and, if present, creates a pip-less venv,
+# hence the matching two-way install below).
+UV="$(command -v uv 2>/dev/null || true)"
+[ -n "$UV" ] || [ ! -x "$HOME/.local/bin/uv" ] || UV="$HOME/.local/bin/uv"
+
 if [ ! -x "$VENV/bin/python3" ]; then
   echo "· creating $VENV"
-  python3 -m venv "$VENV"
+  if ! python3 -m venv "$VENV" 2>/dev/null; then
+    rm -rf "$VENV"
+    [ -n "$UV" ] || {
+      echo "install: python3 -m venv failed (no ensurepip) and uv is not installed." >&2
+      echo "  Fix either way:  sudo apt install python3-venv" >&2
+      echo "               or:  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+      exit 1
+    }
+    echo "  (python3 -m venv unavailable — using uv)"
+    "$UV" venv "$VENV"
+  fi
 fi
+
 echo "· installing python-kasa into $VENV"
-"$VENV/bin/pip" install --quiet --upgrade pip python-kasa
+if [ -x "$VENV/bin/pip" ]; then
+  "$VENV/bin/pip" install --quiet --upgrade pip python-kasa
+elif [ -n "$UV" ]; then
+  "$UV" pip install --quiet --python "$VENV/bin/python3" python-kasa
+else
+  echo "install: $VENV has no pip and uv is not installed — cannot add python-kasa" >&2
+  exit 1
+fi
 
 # Fail loudly here rather than in a service that just restart-loops.
 "$VENV/bin/python3" "$BIN" --json >/dev/null \
