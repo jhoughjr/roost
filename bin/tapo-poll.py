@@ -182,6 +182,25 @@ async def read_dev(handle, creds):
     return entry
 
 
+async def close_all(handles):
+    """Drop the KLAP sessions. --watch deliberately holds them open; a one-shot
+    run must not, or aiohttp complains about unclosed connectors at exit."""
+    for h in handles:
+        if h[2] is not None:
+            try:
+                await h[2].disconnect()
+            except Exception:
+                pass
+            h[2] = None
+
+
+async def once(handles, creds, cfg):
+    try:
+        return await read_all(handles, creds, cfg)
+    finally:
+        await close_all(handles)
+
+
 async def read_all(handles, creds, cfg):
     devices = list(await asyncio.gather(*(read_dev(h, creds) for h in handles)))
     fleet_w = next(
@@ -274,14 +293,14 @@ def main():
     handles = [[label, ip, None] for label, ip in cfg["targets"]]
 
     if "--json" in args:
-        print(json.dumps(asyncio.run(read_all(handles, creds, cfg)), indent=2))
+        print(json.dumps(asyncio.run(once(handles, creds, cfg)), indent=2))
         return
 
     if "--watch" in args:
         asyncio.run(watch(handles, creds, cfg))
         return
 
-    payload = asyncio.run(read_all(handles, creds, cfg))
+    payload = asyncio.run(once(handles, creds, cfg))
     write_cache(payload)
     print(render(payload))
     print(f"  cache: {CACHE} · {post_pulse(payload, cfg['pulse'])}")
