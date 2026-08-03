@@ -21,6 +21,14 @@
 # ~/.roost-tapo.json cache. Neither present → the field is omitted and pulse
 # falls back to the estimate, which watts' roost page marks with a `~`.
 #
+# `chargeW` is battery power flow, signed: + into the battery, − out of it.
+# It exists because macmon reads the die, so charging draw is invisible to it
+# — a MacBook Air measured 11.95 W of system power while pulling 17.81 W into
+# the battery, i.e. ~3x its reported figure. Consumers wanting true grid draw
+# want `wattsW + max(0, chargeW)` while on ac, and 0 while on battery (that
+# energy was bought at the wall earlier, and counting it twice is the error
+# this field exists to let you avoid).
+#
 # `wattsSrc` ("macmon" | "plug") rides along so the map can name the
 # instrument. The two are NOT the same measurement — macmon reads the die,
 # the plug reads the wall and so includes PSU loss and anything else on that
@@ -101,6 +109,26 @@ PCT=$(printf '%s\n' "$BATT" | grep -oE '[0-9]+%' | head -1 | tr -d '%' || true)
 # `if`, not `[ ... ] && ...`: on a desktop PCT is empty, and a bare failing
 # &&-list would trip `set -e` and abort before the POST.
 if [ -n "$PCT" ]; then POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"; fi
+
+# Battery power flow, signed: + into the battery (charging), − out of it.
+#
+# This is the biggest hole in the fleet's power numbers. macmon reads the die,
+# so every watt going into the battery is real grid draw that nothing sees. On
+# a charging MacBook Air, measured: 11.95 W system against 17.81 W charging —
+# the machine was drawing ~3x what it reported.
+#
+# Anchor both greps to a line start. The BatteryData blob is one enormous line
+# that also contains "Voltage", and a looser pattern matches it instead.
+IOREG=$(ioreg -rn AppleSmartBattery 2>/dev/null || true)
+if [ -n "$IOREG" ]; then
+  AMP=$(printf '%s\n' "$IOREG" | awk -F'= ' '/^ *"Amperage" =/{print $2; exit}' | tr -dc '0-9-')
+  VOLT=$(printf '%s\n' "$IOREG" | awk -F'= ' '/^ *"Voltage" =/{print $2; exit}' | tr -dc '0-9')
+  # mA × mV → W. Reported even at 0 (a full battery on AC), because "charging
+  # at 0 W" and "no battery at all" are different facts downstream.
+  if [ -n "$AMP" ] && [ -n "$VOLT" ]; then
+    POWER_JSON="$POWER_JSON,\"chargeW\":$(awk -v a="$AMP" -v v="$VOLT" 'BEGIN{printf "%.2f", a*v/1000000}')"
+  fi
+fi
 
 ;;
 Linux)
@@ -184,6 +212,26 @@ else
   esac
   PCT=$(cat "$BATT_DIR/capacity" 2>/dev/null || true)
   if [ -n "$PCT" ]; then POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"; fi
+
+  # Battery power flow, signed the same way as the Darwin branch: + charging,
+  # − discharging. sysfs reports magnitude only, so `status` supplies the sign.
+  # power_now is µW where the driver offers it; otherwise current_now (µA) ×
+  # voltage_now (µV) — that product is 1e-12 W, hence the 1e6 to reach µW.
+  PW=$(cat "$BATT_DIR/power_now" 2>/dev/null || true)
+  if [ -z "$PW" ]; then
+    CN=$(cat "$BATT_DIR/current_now" 2>/dev/null || true)
+    VN=$(cat "$BATT_DIR/voltage_now" 2>/dev/null || true)
+    if [ -n "$CN" ] && [ -n "$VN" ]; then
+      PW=$(awk -v c="$CN" -v v="$VN" 'BEGIN{printf "%.0f", c*v/1000000}')
+    fi
+  fi
+  if [ -n "$PW" ]; then
+    # `if`, not `[ ... ] && ...` — on a charging battery the test fails and a
+    # bare &&-list would trip `set -e` before the POST. Same trap as PCT above.
+    SIGN=1
+    if [ "$(cat "$BATT_DIR/status" 2>/dev/null || true)" = "Discharging" ]; then SIGN=-1; fi
+    POWER_JSON="$POWER_JSON,\"chargeW\":$(awk -v p="$PW" -v s="$SIGN" 'BEGIN{printf "%.2f", s*p/1000000}')"
+  fi
 fi
 
 ;;
