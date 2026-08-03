@@ -21,6 +21,11 @@
 # ~/.roost-tapo.json cache. Neither present → the field is omitted and pulse
 # falls back to the estimate, which watts' roost page marks with a `~`.
 #
+# `wattsSrc` ("macmon" | "plug") rides along so the map can name the
+# instrument. The two are NOT the same measurement — macmon reads the die,
+# the plug reads the wall and so includes PSU loss and anything else on that
+# outlet — and labelling a plug reading "macmon" would be a plain untruth.
+#
 # Shared key: ~/.roost_node_key (chmod 600), must match `dokku config pulse NODE_KEY`.
 set -euo pipefail
 
@@ -79,7 +84,7 @@ WATTS_JSON=""
 for MACMON in "$(command -v macmon || true)" /opt/homebrew/bin/macmon /usr/local/bin/macmon; do
   [ -n "$MACMON" ] && [ -x "$MACMON" ] || continue
   SYS_W=$("$MACMON" pipe -s 1 2>/dev/null | grep -oE '"sys_power":[0-9.]+' | cut -d: -f2 || true)
-  [ -n "$SYS_W" ] && WATTS_JSON=",\"wattsW\":$SYS_W"
+  [ -n "$SYS_W" ] && WATTS_JSON=",\"wattsW\":$SYS_W,\"wattsSrc\":\"macmon\""
   break
 done
 
@@ -158,7 +163,7 @@ if [ -r "$TAPO_CACHE" ]; then
   TAPO_T=$(grep -oE '"t": *[0-9]+' "$TAPO_CACHE" | head -1 | tr -dc '0-9' || true)
   TAPO_W=$(grep -oE '"fleetWatts": *[0-9.]+' "$TAPO_CACHE" | head -1 | tr -dc '0-9.' || true)
   if [ -n "$TAPO_T" ] && [ -n "$TAPO_W" ] && [ $(( $(date +%s) - TAPO_T )) -lt 120 ]; then
-    WATTS_JSON=",\"wattsW\":$TAPO_W"
+    WATTS_JSON=",\"wattsW\":$TAPO_W,\"wattsSrc\":\"plug\""
   fi
 fi
 
