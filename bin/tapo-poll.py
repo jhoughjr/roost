@@ -30,6 +30,10 @@ Config, via ~/.roostrc KEY=VALUE lines:
   ROOST_TAPO_FLEET     label of the plug powering THIS box (default: opi); its
                        watts land in the cache as `fleetWatts` for node-report
   ROOST_TAPO_INTERVAL  --watch seconds (default 30, matching node-report)
+  ROOST_TAPO_BULB_W    dimmable bulb's rated draw at 100% (default 8.7, the
+                       L530/L530E figure) — bulbs have no current sensor, so
+                       their wattage is brightness × this, flagged `derived`
+                       and kept out of every measured total
   ROOST_PULSE_URL      pulse base URL (default https://pulse.jimmyhoughjr.net)
 
 Secrets: ~/.tapo_pass (chmod 600) holds the TP-Link account password; trailing
@@ -101,6 +105,10 @@ def config():
         "targets": targets,
         "fleet": cfg.get("ROOST_TAPO_FLEET", "opi").strip(),
         "interval": max(5, int(cfg.get("ROOST_TAPO_INTERVAL", "30") or 30)),
+        # Rated draw of a dimmable bulb at 100%, used for the derived wattage.
+        # 8.7 W is the L530/L530E figure; a mixed set of bulbs would need this
+        # per-device, which is a change worth making only once that's true.
+        "bulbW": float(cfg.get("ROOST_TAPO_BULB_W", "8.7") or 8.7),
         "pulse": cfg.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/"),
     }
 
@@ -130,7 +138,46 @@ def num(v):
     return f if f == f and f not in (float("inf"), float("-inf")) else None
 
 
-async def read_dev(handle, creds):
+def brightness_of(dev):
+    """Bulb brightness 0–100, or None on a device that has no dimmer."""
+    mods = getattr(dev, "modules", None) or {}
+    for key in ("Brightness", "Light"):
+        m = mods.get(key)
+        if m is not None:
+            b = num(getattr(m, "brightness", None))
+            if b is not None:
+                return b
+    return None
+
+
+async def bulb_usage(dev, entry):
+    """Cumulative energy for a meterless bulb, via get_device_usage.
+
+    L530s answer get_device_usage but NOT get_current_power or
+    get_energy_usage — they have no current sensor. What comes back is
+    modelled: solve the device's own `saved_power` for its baseline and it is
+    exactly 60.0 W, a hardcoded incandescent reference. So these are the same
+    numbers the Tapo app shows, and they are a calculation, not a measurement.
+    Recorded because they're still useful, flagged because they aren't metered.
+    """
+    try:
+        r = await dev._query_helper("get_device_usage", {})
+    except Exception:
+        return
+    du = (r or {}).get("get_device_usage") or {}
+    power = du.get("power_usage") or {}
+    today = num(power.get("today"))
+    month = num(power.get("past30"))
+    if today is not None:
+        entry["kwhToday"] = round(today / 1000, 3)   # device reports Wh
+    if month is not None:
+        entry["kwhMonth"] = round(month / 1000, 3)
+    mins = num((du.get("time_usage") or {}).get("today"))
+    if mins is not None:
+        entry["minsToday"] = int(mins)
+
+
+async def read_dev(handle, creds, bulb_w=8.7):
     """One device → a plain dict. Never raises: failures come back as `err`.
 
     `handle` is a mutable [label, ip, device] triple so --watch reuses the
@@ -177,6 +224,17 @@ async def read_dev(handle, creds):
                     entry["volts"] = round(v / 1000, 1)
                 if a is not None:
                     entry["amps"] = round(a / 1000, 3)
+        else:
+            # No Energy module at all → no meter. A dimmable bulb still knows
+            # its brightness, and brightness × rated draw is what the Tapo app
+            # itself reports, so compute it — but mark it `derived` so nothing
+            # downstream sums it into a total labelled "measured".
+            bri = brightness_of(dev)
+            if bri is not None:
+                entry["brightness"] = round(bri)
+                entry["derived"] = True
+                entry["watts"] = round(bulb_w * bri / 100 if entry["on"] else 0.0, 2)
+                await bulb_usage(dev, entry)
     except Exception as e:
         entry["err"] = f"{type(e).__name__}: {e}"
     return entry
@@ -202,12 +260,17 @@ async def once(handles, creds, cfg):
 
 
 async def read_all(handles, creds, cfg):
-    devices = list(await asyncio.gather(*(read_dev(h, creds) for h in handles)))
+    devices = list(await asyncio.gather(*(read_dev(h, creds, cfg["bulbW"]) for h in handles)))
+    # Metered only, on both counts. fleetWatts becomes a node's wattsW in pulse,
+    # so a derived figure must never reach it; and a total mixing measured plugs
+    # with modelled bulbs would be neither one thing nor the other.
     fleet_w = next(
-        (d.get("watts") for d in devices if d["label"] == cfg["fleet"] and d.get("watts") is not None),
+        (d.get("watts") for d in devices
+         if d["label"] == cfg["fleet"] and d.get("watts") is not None and not d.get("derived")),
         None,
     )
-    total = sum(d["watts"] for d in devices if d.get("watts") is not None)
+    total = sum(d["watts"] for d in devices
+                if d.get("watts") is not None and not d.get("derived"))
     return {
         "t": int(time.time()),
         "fleetLabel": cfg["fleet"],
@@ -260,13 +323,15 @@ def render(payload):
             rows.append(f"  {d['label']:<12} {d['ip']:<15} ERROR  {d['err']}")
             continue
         w = d.get("watts")
-        watts = f"{w:>7.2f} W" if w is not None else "      — "
+        # "~" marks a derived (bulb) figure, so the table can't be misread as
+        # four measurements when one of them is arithmetic.
+        watts = f"{'~' if d.get('derived') else ' '}{w:>6.2f} W" if w is not None else "      — "
         today = f" {d['kwhToday']:>6.3f} kWh today" if d.get("kwhToday") is not None else ""
         rows.append(
             f"  {d['label']:<12} {d['ip']:<15} {'on ' if d.get('on') else 'off'} "
             f"{watts}{today}  {d.get('alias') or ''}"
         )
-    head = f"tapo — {payload['totalWatts']:.2f} W total"
+    head = f"tapo — {payload['totalWatts']:.2f} W metered"
     if payload.get("fleetWatts") is not None:
         head += f", fleet({payload['fleetLabel']}) {payload['fleetWatts']:.2f} W"
     return "\n".join([head, *rows])
