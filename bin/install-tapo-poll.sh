@@ -15,11 +15,23 @@
 # Prereqs: ~/.tapo_pass (TP-Link account password, chmod 600) and ROOST_TAPO_EMAIL
 # + ROOST_TAPO_DEVICES in ~/.roostrc. Run `tapo-poll.py --discover` first to list
 # device IPs (that works without credentials).
+#
+# ROOST_KASA_SPEC overrides what gets installed, because TP-Link ships firmware
+# that changes the wire protocol and upstream lags it. On 2026-08-04 a push moved
+# five of these devices from KLAP to a cipher called TPAP; no released python-kasa
+# speaks it (upstream issue #1590), so they read as errors until the venv carries
+# a build that does. Point this at such a build — pin a COMMIT, never a branch, or
+# the next `git pull` silently changes what runs against your credentials.
 set -euo pipefail
 
-BIN="$(cd "$(dirname "$0")" && pwd)/tapo-poll.py"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "$DIR/roost-env.sh"
+
+BIN="$DIR/tapo-poll.py"
 VENV="$HOME/.roost-tapo-venv"
 LABEL="net.jimmyhoughjr.roost-tapo-poll"
+KASA_SPEC="${ROOST_KASA_SPEC:-python-kasa}"
 
 [ -f "$HOME/.tapo_pass" ] || { echo "install: create ~/.tapo_pass first (chmod 600)" >&2; exit 1; }
 grep -q '^ROOST_TAPO_EMAIL=' "$HOME/.roostrc" 2>/dev/null \
@@ -51,11 +63,11 @@ if [ ! -x "$VENV/bin/python3" ]; then
   fi
 fi
 
-echo "· installing python-kasa into $VENV"
+echo "· installing $KASA_SPEC into $VENV"
 if [ -x "$VENV/bin/pip" ]; then
-  "$VENV/bin/pip" install --quiet --upgrade pip python-kasa
+  "$VENV/bin/pip" install --quiet --upgrade pip "$KASA_SPEC"
 elif [ -n "$UV" ]; then
-  "$UV" pip install --quiet --python "$VENV/bin/python3" python-kasa
+  "$UV" pip install --quiet --python "$VENV/bin/python3" "$KASA_SPEC"
 else
   echo "install: $VENV has no pip and uv is not installed — cannot add python-kasa" >&2
   exit 1

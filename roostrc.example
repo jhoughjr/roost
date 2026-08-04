@@ -93,6 +93,13 @@ ROOST_STATUS_SITE=$HOME/status-site
 # brightness × the rated draw below, flagged `derived` and never summed into
 # a measured total. 8.7 W is the L530/L530E rating.
 # ROOST_TAPO_BULB_W=8.7
+# Which python-kasa install-tapo-poll.sh puts in the venv. Default: the PyPI
+# release. TP-Link changes the wire protocol by firmware push and upstream lags
+# it — on 2026-08-04 five devices moved from KLAP to a cipher called TPAP, which
+# no release speaks (python-kasa#1590), so they errored until the venv carried a
+# build that did. Pin a COMMIT, never a branch: a branch means the code talking
+# to your credentials can change under you without a roost commit to point at.
+# ROOST_KASA_SPEC=git+https://github.com/ZeliardM/python-kasa@e7084472972f08f2e2235b342f3964aedbfaeb3b
 # pulse base URL — `roost ui` monitor tab + node/fleet tooling
 # ROOST_PULSE_URL=https://pulse.yourdomain.net
 
