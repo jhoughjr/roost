@@ -103,6 +103,19 @@ ROOST_STATUS_SITE=$HOME/status-site
 # pulse base URL — `roost ui` monitor tab + node/fleet tooling
 # ROOST_PULSE_URL=https://pulse.yourdomain.net
 
+# ha-scoop — copy Home Assistant's HOURLY power statistics into pulse. HA's
+# recorder purges states (purge_keep_days) but never its statistics table, so
+# this is the only path to power history older than pulse's 90-day sample
+# retention. Token in ~/.ha_token (chmod 600), from Profile → Security.
+# Labels must match the ROOST_TAPO_DEVICES labels or the same plug ends up
+# under two names. List what HA exposes with `roost ha-scoop --entities`.
+# Note both readers use python-kasa and therefore share a failure mode: when a
+# firmware push broke the protocol on 2026-08-04 they went blind 17 seconds
+# apart. This buys retention, not redundancy against that.
+# ROOST_HA_URL=http://opi.local:8123
+# ROOST_HA_ENTITIES=room=sensor.room_power_current_consumption,fridge=sensor.mini_fridge_current_consumption
+# ROOST_HA_SCOOP_DAYS=2
+
 # loc collector — JSON config describing the LOC buckets a board charts.
 # Lives with the board it describes (see status-site/<slug>/loc.config.json)
 # so both writer machines get it by git pull. Unset = collector skips.
