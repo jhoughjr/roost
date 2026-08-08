@@ -34,11 +34,19 @@ Config, via ~/.roostrc KEY=VALUE lines:
                        which, e.g. fridge=room,opi=room,induction=room. A child
                        is physically downstream, so the parent's meter ALREADY
                        includes it — only roots are summed into totalWatts.
+                       Bulbs have no parent (lighting circuit, not a plug), so
+                       they are roots and do count toward the total.
                        Omitting this double-counts every sub-metered device.
   ROOST_TAPO_BULB_W    dimmable bulb's rated draw at 100% (default 8.7, the
                        L530/L530E figure) — bulbs have no current sensor, so
-                       their wattage is brightness × this, flagged `derived`
-                       and kept out of every measured total
+                       their wattage is brightness × this. For a PWM-dimmed LED
+                       that IS the power, brightness being the duty cycle, so it
+                       counts toward totalWatts; it stays flagged `derived` and
+                       broken out as derivedWatts because its provenance is
+                       arithmetic, not a meter. Two known biases: a saturated
+                       COLOUR drives fewer emitters and draws less than this
+                       predicts, and the driver's floor makes the bottom of the
+                       range less than linear.
   ROOST_PULSE_URL      pulse base URL (default https://pulse.jimmyhoughjr.net)
 
 Secrets: ~/.tapo_pass (chmod 600) holds the TP-Link account password; trailing
@@ -329,9 +337,9 @@ async def once(handles, creds, cfg):
 
 async def read_all(handles, creds, cfg):
     devices = list(await asyncio.gather(*(read_dev(h, creds, cfg["bulbW"]) for h in handles)))
-    # Metered only, on both counts. fleetWatts becomes a node's wattsW in pulse,
-    # so a derived figure must never reach it; and a total mixing measured plugs
-    # with modelled bulbs would be neither one thing nor the other.
+    # fleetWatts becomes a node's wattsW in pulse, which is advertised as a
+    # measurement of that box, so a derived figure must never reach it. This is
+    # the one place the measured/derived line still bars the way.
     fleet_w = next(
         (d.get("watts") for d in devices
          if d["label"] == cfg["fleet"] and d.get("watts") is not None and not d.get("derived")),
@@ -347,14 +355,28 @@ async def read_all(handles, creds, cfg):
     # Sum ROOTS only. A child plug sits downstream of its parent, so the
     # parent's meter already counted it; adding both bills the same watts
     # twice. Invisible while the children idle, ~1500 W wrong when the kettle
-    # runs. Derived (bulb) figures stay out of measured totals entirely.
-    total = sum(d["watts"] for d in devices
-                if d.get("watts") is not None and not d.get("derived") and not d.get("parent"))
+    # runs.
+    #
+    # Bulbs ARE in this total. They are not on any metered plug — they hang off
+    # the lighting circuit, so they are roots and there is nothing to
+    # double-count. And a PWM-dimmed LED's draw genuinely IS duty cycle × rated
+    # draw: brightness is the duty cycle, so the arithmetic describes the
+    # mechanism rather than approximating it. Leaving three lit bulbs out
+    # understated the house by ~26 W, a bigger error than any imprecision in
+    # putting them in. The biases that remain are named on ROOST_TAPO_BULB_W.
+    roots = [d for d in devices if d.get("watts") is not None and not d.get("parent")]
+    measured = sum(d["watts"] for d in roots if not d.get("derived"))
+    derived = sum(d["watts"] for d in roots if d.get("derived"))
     return {
         "t": int(time.time()),
         "fleetLabel": cfg["fleet"],
         "fleetWatts": fleet_w,
-        "totalWatts": round(total, 2),
+        # The grand total, and the split saying where it came from. A breakdown
+        # rather than an exclusion, so a consumer can still ask for "measured
+        # only" without the poller deciding that on its behalf.
+        "totalWatts": round(measured + derived, 2),
+        "measuredWatts": round(measured, 2),
+        "derivedWatts": round(derived, 2),
         "devices": devices,
     }
 
@@ -430,7 +452,11 @@ def render(payload):
         if id(d) not in seen:
             rows.append(line(d, 0))
 
-    head = f"tapo — {payload['totalWatts']:.2f} W metered"
+    head = f"tapo — {payload['totalWatts']:.2f} W total"
+    # Show the split, so "total" is never read as "all of it metered".
+    if payload.get("derivedWatts"):
+        head += (f" ({payload['measuredWatts']:.2f} metered"
+                 f" + {payload['derivedWatts']:.2f} lights)")
     if payload.get("fleetWatts") is not None:
         head += f", fleet({payload['fleetLabel']}) {payload['fleetWatts']:.2f} W"
     return "\n".join([head, *rows])
