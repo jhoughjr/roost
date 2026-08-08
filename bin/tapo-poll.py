@@ -58,16 +58,33 @@ import urllib.request
 # the two look identical and the re-exec would be skipped forever.
 VENV = os.path.expanduser("~/.roost-tapo-venv")
 VENV_PY = os.path.join(VENV, "bin", "python3")
+# Tolerate a missing python-kasa at IMPORT time and re-exec from main() instead,
+# for the same reason ha-scoop.py keeps its aiohttp import soft: a test that
+# imports this module to check the wattage shaping must not become a run of the
+# tool. CI has no venv, so an execv/sys.exit out here would take the test
+# process with it — which is why the bulb bug below shipped untested.
 try:
     import kasa  # noqa: F401
+    from kasa import Credentials, Discover
 except ImportError:
-    if os.path.exists(VENV_PY) and os.path.normpath(sys.prefix) != os.path.normpath(VENV):
-        os.execv(VENV_PY, [VENV_PY, os.path.abspath(__file__), *sys.argv[1:]])
-    sys.exit("tapo-poll: python-kasa not installed — run install-tapo-poll.sh")
+    kasa = Credentials = Discover = None
 
 import asyncio  # noqa: E402
 
-from kasa import Credentials, Discover  # noqa: E402
+
+def ensure_kasa():
+    """Re-exec into the venv holding python-kasa, or exit saying how to get it.
+
+    The "already inside it?" guard compares sys.prefix, NOT the interpreter
+    path: a venv's bin/python3 is a symlink to the base interpreter, so
+    realpath() makes the two look identical and the re-exec would be skipped
+    forever.
+    """
+    if kasa is not None:
+        return
+    if os.path.exists(VENV_PY) and os.path.normpath(sys.prefix) != os.path.normpath(VENV):
+        os.execv(VENV_PY, [VENV_PY, os.path.abspath(__file__), *sys.argv[1:]])
+    sys.exit("tapo-poll: python-kasa not installed — run install-tapo-poll.sh")
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
@@ -170,14 +187,31 @@ def num(v):
 
 
 def brightness_of(dev):
-    """Bulb brightness 0–100, or None on a device that has no dimmer."""
+    """Bulb brightness 0–100, or None when this tick exposes no dimmer.
+
+    `Light.brightness` RAISES instead of returning None when the Brightness
+    module is missing from the device's module list, because python-kasa's
+    `Light.is_dimmable` is only `Module.Brightness in modules` — it asks the
+    module list, never the hardware. So a fully dimmable multicolor bulb
+    reports "Bulb is not dimmable." on any tick where that module drops out.
+
+    getattr's default does not help: it catches AttributeError, not a property
+    that raises. That exception used to escape into read_dev's handler and blank
+    the WHOLE device — watts, kWh today, kWh month, all replaced by one `err`
+    string — for a bulb that was lit and working. Swallow per module and fall
+    through to the next candidate instead.
+    """
     mods = getattr(dev, "modules", None) or {}
     for key in ("Brightness", "Light"):
         m = mods.get(key)
-        if m is not None:
+        if m is None:
+            continue
+        try:
             b = num(getattr(m, "brightness", None))
-            if b is not None:
-                return b
+        except Exception:
+            continue
+        if b is not None:
+            return b
     return None
 
 
@@ -265,7 +299,10 @@ async def read_dev(handle, creds, bulb_w=8.7):
                 entry["brightness"] = round(bri)
                 entry["derived"] = True
                 entry["watts"] = round(bulb_w * bri / 100 if entry["on"] else 0.0, 2)
-                await bulb_usage(dev, entry)
+            # Cumulative usage is an independent query, so ask for it even on a
+            # tick with no readable brightness — otherwise a momentarily absent
+            # Brightness module throws away the bulb's kWh as well as its watts.
+            await bulb_usage(dev, entry)
     except Exception as e:
         entry["err"] = f"{type(e).__name__}: {e}"
     return entry
@@ -418,6 +455,7 @@ def main():
     args = set(sys.argv[1:])
     if args - {"--json", "--watch", "--discover"}:
         sys.exit(__doc__)
+    ensure_kasa()
 
     if "--discover" in args:
         print(asyncio.run(discover()))
