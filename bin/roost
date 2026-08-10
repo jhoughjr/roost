@@ -46,6 +46,8 @@ case "$cmd" in
     python3 "$SGEN/bin/collect/narrative.py" || echo "note: narrative failed (non-fatal)"
     python3 "$SGEN/bin/collect/api_consumption.py" || echo "note: api-consumption failed (non-fatal)"
     python3 "$SGEN/bin/collect/proposal_state.py" || echo "note: proposal-state failed (non-fatal)"
+    # Also Clauffice-sourced: the wayfinder map's frontier, blocked chains, and fog.
+    python3 "$SGEN/bin/collect/wayfinder.py" || echo "note: wayfinder failed (non-fatal)"
     python3 "$SGEN/bin/collect/builds.py" || echo "note: builds failed (non-fatal)"
     python3 "$SGEN/bin/collect/loc.py" || echo "note: loc failed (non-fatal)"
     # After repo_stats: it upserts the "Test results" section wholesale, and
