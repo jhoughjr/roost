@@ -41,6 +41,9 @@ case "$cmd" in
     # build's cost (time + green rate + trend) beside it.
     python3 "$SGEN/bin/collect/ci_health.py" || echo "note: ci health failed (non-fatal)"
     python3 "$SGEN/bin/collect/swift_tests.py" || echo "note: swift-tests failed (non-fatal)"
+    # After swift_tests: that one counts the test cases a source tree declares, and this one reads what a gate actually reported.
+    # A repo configured for both lands here second, so the measured result replaces the inventory tile rather than the reverse.
+    python3 "$SGEN/bin/collect/swift_test_report.py" || echo "note: swift-test-report failed (non-fatal)"
     python3 "$SGEN/bin/collect/ci_live.py" || echo "note: ci live failed (non-fatal)"
     python3 "$SGEN/bin/collect/shipped_week.py" || echo "note: shipped-week failed (non-fatal)"
     python3 "$SGEN/bin/collect/narrative.py" || echo "note: narrative failed (non-fatal)"
