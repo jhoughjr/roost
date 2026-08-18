@@ -223,6 +223,25 @@ fi
 # never saw and a plain push is rejected non-fast-forward forever after —
 # killing the whole run under set -e. Forcing is correct here: the tree we
 # push is always canonical-mirror + freshly regenerated boards.
-git push --force dokku main
+# The push is the last step of a run that took minutes, and losing one ssh race
+# threw all of it away: the collectors had already produced a fresh board, and the
+# run died here under set -e with the site still serving the previous one. On
+# 2026-08-18 that left the board reporting a four-day-old "last green" while two
+# green runs sat in the history underneath it. A blip is worth retrying rather
+# than discarding a whole cycle for, so the attempts back off and only then give up.
+push_to_dokku() {
+  local attempt=1 delay=5
+  until git push --force dokku main; do
+    if [ "$attempt" -ge 4 ]; then
+      echo "✗ deploy push failed 4 times — the site keeps the board it last published" >&2
+      return 1
+    fi
+    echo "note: deploy push failed (attempt $attempt), retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+push_to_dokku
 git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-fatal)"
 echo "✓ status deployed — https://status.${ROOST_DOMAIN}/"
