@@ -242,6 +242,24 @@ push_to_dokku() {
     delay=$((delay * 2))
   done
 }
-push_to_dokku
+# The deploy and the mirror fail independently, so one must not take the other
+# down. `push_to_dokku` reaches the opi across the LAN, and that push has been
+# seen to fail with "No route to host" while the host answers ping and accepts
+# ssh seconds later. Under `set -e` a failure here used to end the run before
+# the mirror push, so a flaky LAN moment stranded every board on this machine:
+# 21 commits and six hours of them on 2026-08-18, with the site still serving
+# what it last published.
+#
+# The mirror is the durable copy and goes over the WAN, so it runs either way.
+# A failed deploy is still a failed run, and the next one retries it.
+deployed=1
+push_to_dokku || deployed=0
+
 git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-fatal)"
-echo "✓ status deployed — https://status.${ROOST_DOMAIN}/"
+
+if [ "$deployed" -eq 1 ]; then
+  echo "✓ status deployed — https://status.${ROOST_DOMAIN}/"
+else
+  echo "✗ status NOT deployed, but the boards are committed and mirrored — the next run retries the deploy" >&2
+  exit 1
+fi
