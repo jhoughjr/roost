@@ -16,6 +16,21 @@ BIN="$(cd "$(dirname "$0")" && pwd)"
 SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
 SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
 DOCS="${ROOST_DOCS:-$HOME/repos/docs}"
+
+# == Local Network Privacy hop ==
+# macOS gates a launchd agent's connections to the local subnet, and the grant flaps.
+# On 2026-08-20 every scheduled run from 00:16 to past 09:00 got EHOSTUNREACH to dokku,
+# while an interactive ssh session on the same box reached it 3 of 3 at the same time.
+# sshd-spawned processes are exempt from the gate.
+# So the run re-execs itself through ssh to localhost, and every LAN touch (the dokku push, the fleet collector) runs in the exempt context.
+# The hop is non-fatal: with no self key or with Remote Login off, the run continues in place and only the LAN steps risk the gate.
+if [ -z "${ROOST_LOOPBACK:-}" ] && [ -z "${SSH_CONNECTION:-}" ] && [ -z "${ROOST_STATUS_DRYRUN:-}" ]; then
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 localhost true 2>/dev/null; then
+    echo "✓ loopback hop: re-running via ssh localhost (Local Network Privacy exemption)"
+    exec ssh -o BatchMode=yes localhost "ROOST_LOOPBACK=1 PATH=/opt/homebrew/bin:\$PATH exec bash '$BIN/status.sh' $(printf '%q' "${1:-}")"
+  fi
+  echo "note: loopback hop unavailable (ssh localhost failed) - running in place"
+fi
 # The narrative is the status message, captured per-revision by the history
 # collector. Left to a human it drifts stale while the auto-collected tiles stay
 # fresh. So when no message is given, compose one from what actually merged —
