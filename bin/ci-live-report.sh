@@ -60,6 +60,13 @@ command -v jq  >/dev/null || { echo "ci-live-report: jq not found" >&2; exit 1; 
 # The live states — exactly the ones ci_status.py's CONSOLE_SKIP drops.
 LIVE='["in_progress","queued","waiting","requested"]'
 
+# A run that just settled stays on the feed for a grace window, with its real
+# conclusion. Without it a run falls off the live console the second it finishes,
+# and the board's ledger only learns of it at the next refresh, so for the minutes
+# in between a failed run is visible nowhere. Seconds, default 30 minutes.
+case "${ROOST_CI_LIVE_GRACE:-}" in ''|*[!0-9]*) GRACE=1800 ;; *) GRACE="$ROOST_CI_LIVE_GRACE" ;; esac
+NOW=$(date -u +%s)
+
 AGGREGATE="${ROOST_CI_LIVE_AGGREGATE:-}"
 ALL_LINES='[]'      # every repo's live lines, for the aggregate feed
 AGG_INTERVAL=''     # the aggregate refreshes as often as its fastest member
@@ -93,20 +100,29 @@ for SPEC in "${SPECS[@]}"; do
   [ -n "$REPO" ] && [ -n "$PROJECT" ] || continue
 
   RUNS=$(gh run list --repo "$REPO" --limit 12 \
-    --json status,conclusion,headBranch,event,createdAt,url,databaseId 2>/dev/null) || RUNS=""
+    --json status,conclusion,headBranch,event,createdAt,updatedAt,url,databaseId 2>/dev/null) || RUNS=""
   [ -n "$RUNS" ] || { echo "ci-live-report: $REPO — gh returned nothing, skipping"; continue; }
 
-  # Keep only live states; build the exact console-line dicts the board expects.
+  # Keep live states, plus runs that settled inside the grace window; build the
+  # exact console-line dicts the board expects.
   # text  "<Label> · <headBranch>"   (Label from the spec, or the repo name)
-  # meta  "· <event>"     tone "wip"   ts createdAt   href url
+  # meta  "· <event>"     ts createdAt   href url
+  # status/tone  live: "in progress"/"wip"   settled: the conclusion, toned by it
   # cmd   "gh run watch <id> -R <repo>"  → the copy-to-clipboard "watch it live" chip
   LINES=$(echo "$RUNS" | jq -c --arg repo "$REPO" --arg label "$LABEL" \
-    --argjson live "$LIVE" '
+    --argjson live "$LIVE" --argjson now "$NOW" --argjson grace "$GRACE" '
+    def settled_at: (.updatedAt // .createdAt // "1970-01-01T00:00:00Z") | fromdateiso8601;
+    def is_live: .status as $s | ($live | index($s)) != null;
+    def in_grace: .status == "completed" and ($now - settled_at) <= $grace;
+    def tone: if is_live then "wip"
+              elif .conclusion == "success" then "go"
+              elif .conclusion == "failure" or .conclusion == "timed_out" then "you"
+              else "none" end;
     [ .[]
-        | select(.status as $s | $live | index($s))
+        | select(is_live or in_grace)
         | {
-            status: (.status | gsub("_"; " ")),
-            tone:   "wip",
+            status: ((if is_live then .status else (.conclusion // .status) end) | gsub("_"; " ")),
+            tone:   tone,
             text:   ($label + " · " + (.headBranch // "?")),
             meta:   ("· " + (.event // "")),
             ts:     .createdAt,
