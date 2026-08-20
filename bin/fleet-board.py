@@ -7,7 +7,7 @@ each app's HTTP reachability through nginx. Emits a statusgen board.
 
 Usage: fleet-board.py [output-path]   (default: ~/status-site/fleet/board.json)
 """
-import json, os, re, subprocess, sys, datetime
+import concurrent.futures, json, os, re, subprocess, sys, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roostlib  # noqa: E402
@@ -42,70 +42,88 @@ def http_check(fqdn):
     except subprocess.TimeoutExpired:
         return "000"
 
+def collect_app(app):
+    """One app's row, over its own ssh calls, so the fleet collects in
+    parallel. 21 apps at 4-5 serial round-trips each cost the pipeline 140
+    seconds per push (measured 2026-08-20); the wall time is now the slowest
+    single app."""
+    rep = ssh("ps:report", app)
+    running = report_field(rep, "Running") == "true"
+    deployed = report_field(rep, "Deployed") == "true"
+    procs = report_field(rep, "Processes") or "0"
+    domains = ssh("domains:report", app, "--domains-app-vhosts").split()
+    fqdn = next((d for d in domains if d.endswith(DOMAIN)), domains[0] if domains else f"{app}.{DOMAIN}")
+    code = http_check(fqdn) if deployed else "—"
+    created = ""
+    try:
+        insp = json.loads(ssh("ps:inspect", app))
+        created = insp[0].get("Created", "")[:10]
+    except (json.JSONDecodeError, IndexError, ValueError):
+        pass
+    mem_mb = ""
+    if running:
+        # sum process RSS inside the container (cgroup files reflect the
+        # exec scope, not the app — learned the hard way)
+        rss_kb = sum(int(x) for x in ssh("enter", app, "web", "ps", "-o", "rss=").split() if x.isdigit())
+        if rss_kb:
+            mem_mb = f"{rss_kb / 1024:.0f} MB"
+    expected = EXPECTED.get(app, "200")
+    healthy = running and code == expected
+    http_bit = f"http {code}"
+    if expected != "200" and code == expected:
+        http_bit += " (expected)"
+    note_bits = [http_bit, f"{procs} proc"]
+    if mem_mb: note_bits.insert(1, mem_mb)
+    if created: note_bits.append(f"container since {created}")
+    row = {
+        "id": app,
+        "q": fqdn,
+        "href": f"https://{fqdn}/",
+        "note": " · ".join(note_bits),
+        "pill": {"text": "up" if healthy else ("degraded" if running else "down"),
+                 "tone": "go" if healthy else "srv"},
+    }
+    return row, running, code == expected, float(mem_mb.split()[0]) if mem_mb else 0.0
+
+
+def host_metrics():
+    """(mem%, disk%, load) via ONE container. This was three `dokku run`
+    calls, and every `dokku run` boots a fresh container - three boots per
+    push to read three numbers."""
+    mem_pct = disk_pct = load = "?"
+    try:
+        combined = ssh("run", METRIC_APP, "sh", "-c",
+                       "'free -m; df -h /; uptime'", timeout=60)
+        m = re.search(r"^Mem:\s+(\d+)\s+(\d+)", combined, re.M)
+        if m:
+            mem_pct = f"{int(m.group(2)) * 100 // int(m.group(1))}%"
+        m = re.search(r"(\d+)%", combined)
+        if m:
+            disk_pct = f"{m.group(1)}%"
+        m = re.search(r"load average[s]?:\s*([\d.]+)", combined)
+        if m:
+            load = m.group(1)
+    except subprocess.TimeoutExpired:
+        pass
+    return mem_pct, disk_pct, load
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(STATUS_SITE, "fleet/board.json")
     apps = [a.strip() for a in ssh("apps:list").splitlines()
             if a.strip() and not a.startswith("=")]
 
+    # 6 workers: enough to collapse the wall time, few enough to stay clear of
+    # sshd's connection throttle on the host.
     rows, up, ok, fleet_mb = [], 0, 0, 0.0
-    for app in apps:
-        rep = ssh("ps:report", app)
-        running = report_field(rep, "Running") == "true"
-        deployed = report_field(rep, "Deployed") == "true"
-        procs = report_field(rep, "Processes") or "0"
-        domains = ssh("domains:report", app, "--domains-app-vhosts").split()
-        fqdn = next((d for d in domains if d.endswith(DOMAIN)), domains[0] if domains else f"{app}.{DOMAIN}")
-        code = http_check(fqdn) if deployed else "—"
-        created = ""
-        try:
-            insp = json.loads(ssh("ps:inspect", app))
-            created = insp[0].get("Created", "")[:10]
-        except (json.JSONDecodeError, IndexError, ValueError):
-            pass
-        mem_mb = ""
-        if running:
-            # sum process RSS inside the container (cgroup files reflect the
-            # exec scope, not the app — learned the hard way)
-            rss_kb = sum(int(x) for x in ssh("enter", app, "web", "ps", "-o", "rss=").split() if x.isdigit())
-            if rss_kb:
-                mem_mb = f"{rss_kb / 1024:.0f} MB"
-        expected = EXPECTED.get(app, "200")
-        healthy = running and code == expected
-        if running: up += 1
-        if code == expected: ok += 1
-        if mem_mb: fleet_mb += float(mem_mb.split()[0])
-        http_bit = f"http {code}"
-        if expected != "200" and code == expected:
-            http_bit += " (expected)"
-        note_bits = [http_bit, f"{procs} proc"]
-        if mem_mb: note_bits.insert(1, mem_mb)
-        if created: note_bits.append(f"container since {created}")
-        rows.append({
-            "id": app,
-            "q": fqdn,
-            "href": f"https://{fqdn}/",
-            "note": " · ".join(note_bits),
-            "pill": {"text": "up" if healthy else ("degraded" if running else "down"),
-                     "tone": "go" if healthy else "srv"},
-        })
-
-    # host metrics via a container (shares the host kernel's view)
-    mem_pct = disk_pct = load = "?"
-    try:
-        free = ssh("run", METRIC_APP, "free", "-m", timeout=60)
-        m = re.search(r"^Mem:\s+(\d+)\s+(\d+)", free, re.M)
-        if m:
-            mem_pct = f"{int(m.group(2)) * 100 // int(m.group(1))}%"
-        df = ssh("run", METRIC_APP, "df", "-h", "/", timeout=60)
-        m = re.search(r"(\d+)%", df)
-        if m:
-            disk_pct = f"{m.group(1)}%"
-        upt = ssh("run", METRIC_APP, "uptime", timeout=60)
-        m = re.search(r"load average[s]?:\s*([\d.]+)", upt)
-        if m:
-            load = m.group(1)
-    except subprocess.TimeoutExpired:
-        pass
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        metrics = pool.submit(host_metrics)
+        for row, running, http_ok, mb in pool.map(collect_app, apps):
+            rows.append(row)
+            if running: up += 1
+            if http_ok: ok += 1
+            fleet_mb += mb
+        mem_pct, disk_pct, load = metrics.result()
 
     def tone_pct(v, warn):
         try:
