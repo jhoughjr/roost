@@ -79,9 +79,26 @@ case "$cmd" in
     ;;
   restart) exec ssh -o BatchMode=yes "$DOKKU" ps:restart "${1:?usage: roost restart <app>}" ;;
   config)
-    app="${1:?usage: roost config <app> [KEY=VALUE ...]}"; shift || true
-    if [ $# -gt 0 ]; then exec ssh -o BatchMode=yes "$DOKKU" config:set "$app" "$@"
-    else exec ssh -o BatchMode=yes "$DOKKU" config:show "$app"; fi
+    # Reads stay here. Writes moved to hatchery, which writes the declaration and lets
+    # tofu apply, so the declaration stays true. A value set through dokku directly is
+    # invisible to the declaration, and tofu plan starts describing something that is
+    # no longer true — the drift hatchery config audit exists to find.
+    app="${1:?usage: roost config <app> [--force KEY=VALUE ...]}"; shift || true
+    if [ $# -eq 0 ]; then exec ssh -o BatchMode=yes "$DOKKU" config:show "$app"; fi
+    if [ "${1:-}" = "--force" ]; then
+      shift
+      [ $# -gt 0 ] || { echo "usage: roost config $app --force KEY=VALUE ..." >&2; exit 64; }
+      ssh -o BatchMode=yes "$DOKKU" config:set "$app" "$@"
+      echo "note: the declaration did not see this write. Run: hatchery config audit" >&2
+      exit 0
+    fi
+    {
+      echo "roost does not write config any more. hatchery owns config, because it writes"
+      echo "the declaration and the declaration must stay true."
+      echo "  hatchery config set <stack> $app KEY=VALUE"
+      echo "  roost config $app --force KEY=VALUE    # the old direct write, then audit it"
+    } >&2
+    exit 64
     ;;
   ui)     exec python3 "$BIN/roost-ui.py" "$@" ;;
   doctor)

@@ -32,7 +32,7 @@ diagnoses the setup when anything misbehaves.
 | `roost fleet` | refresh the fleet board json |
 | `roost kick` | fire the status runner's hourly deploy now |
 | `roost rollout [--kick]` | ff-only pull roost + statusgen on every writer machine after a merge |
-| `roost apps` / `ps [app]` / `logs <app> [-n N]` / `restart <app>` / `config <app> [K=V …]` | day-2 Dokku operations over ssh |
+| `roost apps` / `ps [app]` / `logs <app> [-n N]` / `restart <app>` / `config <app>` | day-2 Dokku reads over ssh. Config writes moved to `hatchery config set`, which keeps the declaration true; `--force` keeps the old direct write for emergencies |
 | `roost prune [project] [--yes] [--deep] [--caches]` | reclaim build artifacts (dry-run by default) |
 | `roost backup` | pull pi data to `~/Backups/roost` |
 | `roost doctor` | diagnose ssh, token, zone, and tooling |
