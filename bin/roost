@@ -52,6 +52,9 @@ case "$cmd" in
     # Also Clauffice-sourced: the wayfinder map's frontier, blocked chains, and fog.
     python3 "$SGEN/bin/collect/wayfinder.py" || echo "note: wayfinder failed (non-fatal)"
     python3 "$SGEN/bin/collect/builds.py" || echo "note: builds failed (non-fatal)"
+    # The boundary seam: health flows hatchery to roost. The collector reads hatchery's
+    # status route (ROOST_HATCHERY_URL) and skips itself when unconfigured.
+    python3 "$SGEN/bin/collect/hatchery_stacks.py" || echo "note: hatchery stacks failed (non-fatal)"
     python3 "$SGEN/bin/collect/loc.py" || echo "note: loc failed (non-fatal)"
     # After repo_stats: it upserts the "Test results" section wholesale, and
     # test_detail re-applies the tile links onto it each push.

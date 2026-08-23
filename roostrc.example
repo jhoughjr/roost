@@ -120,3 +120,9 @@ ROOST_STATUS_SITE=$HOME/status-site
 # Lives with the board it describes (see status-site/<slug>/loc.config.json)
 # so both writer machines get it by git pull. Unset = collector skips.
 # ROOST_LOC_CONFIG=$HOME/status-site/clauffice/loc.config.json
+
+# The Stacks section: hatchery's health onto the board. The URL must be one the
+# machine running the collectors can reach — hatchery serve binds 127.0.0.1 by
+# default, so the control plane serves with --bind for this.
+#ROOST_HATCHERY_URL=http://controlplane.local:7878
+#ROOST_HATCHERY_BOARD=clauffice
