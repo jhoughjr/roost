@@ -126,3 +126,5 @@ ROOST_STATUS_SITE=$HOME/status-site
 # default, so the control plane serves with --bind for this.
 #ROOST_HATCHERY_URL=http://controlplane.local:7878
 #ROOST_HATCHERY_BOARD=clauffice
+# serve requires a token whenever it binds off-host, which a polled serve does.
+#ROOST_HATCHERY_TOKEN=
