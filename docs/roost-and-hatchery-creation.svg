@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" role="img" aria-labelledby="title desc">
+  <title id="title">The Creation of Roost</title>
+  <desc id="desc">After Michelangelo. On the left the roost rooster stands one-legged on a
+  small server and reaches a talon out to the right. On the right a hatching egg descends
+  from a manifest and reaches a wing down to the left. Talon and wingtip do not quite touch.
+  The gap between them is the seam.</desc>
+
+  <style>
+    .ink  { fill: #C4602A; }
+    .tint { fill: #C4602A; opacity: .17; }
+    /* Limbs are stroked, not filled. A tapered outline drawn as two hand-paired
+       bezier edges collapses to a sliver wherever the curves converge, which is
+       exactly where a toe or a feather needs its weight. */
+    .limb { fill: none; stroke: #C4602A; stroke-linecap: round; stroke-linejoin: round; }
+    .hair { fill: none; stroke: #C4602A; stroke-width: 2; opacity: .55; }
+    .whisper { fill: #C4602A; opacity: .6;
+               font: 500 12px ui-monospace, Menlo, monospace; letter-spacing: .18em; }
+    @media (prefers-color-scheme: dark) {
+      .ink  { fill: #E08349; }
+      .tint { fill: #E08349; opacity: .22; }
+      .limb { stroke: #E08349; }
+      .hair { stroke: #E08349; }
+      .whisper { fill: #E08349; }
+    }
+  </style>
+
+  <!-- ══ left: roost comes up from a machine ═══════════════════════════ -->
+
+  <!-- The machine is the perch. The repo's mark stands on a bar; here the bar
+       is the box, because that is what roost actually stands on. -->
+  <rect class="tint" x="16" y="194" width="290" height="92" rx="14"/>
+  <rect class="ink" x="42" y="214" width="116" height="9" rx="4.5"/>
+  <rect class="ink" x="42" y="236" width="82" height="9" rx="4.5"/>
+  <rect class="ink" x="42" y="258" width="138" height="9" rx="4.5"/>
+  <circle class="ink" cx="272" cy="218" r="9"/>
+  <rect class="ink" x="226" y="252" width="30" height="18" rx="4"/>
+  <rect class="ink" x="264" y="252" width="30" height="18" rx="4"/>
+
+  <!-- The reaching leg, drawn before the body so the thigh tucks under it. -->
+  <path class="limb" stroke-width="19"
+        d="M148,166 C186,180 220,184 250,180 C300,172 340,160 372,148"/>
+
+  <!-- The talon: three forward toes and a hind one. The middle toe reaches
+       furthest, because it is the finger in the painting. -->
+  <path class="limb" stroke-width="10" d="M372,152 C392,142 406,134 421,128"/>
+  <path class="limb" stroke-width="11" d="M372,152 C396,150 412,148 431,147"/>
+  <path class="limb" stroke-width="10" d="M372,152 C392,158 404,164 417,172"/>
+  <path class="limb" stroke-width="9"  d="M370,154 C361,161 353,169 345,180"/>
+
+  <!-- The roost mark itself, unaltered but for two things: no perch, and only
+       the back leg. The front one is busy. -->
+  <g class="ink" transform="translate(40 14) scale(3.4)">
+    <path d="M19 39 C5 34 2 18 9 7 C9.5 21 14 31 24 33 Z"/>
+    <path d="M22 33 C13 29 11 19 15 11 C16 21 19 27 27 29 Z"/>
+    <ellipse cx="29" cy="33" rx="13" ry="11"/>
+    <circle cx="43" cy="18" r="5.7"/>
+    <circle cx="40.5" cy="11" r="2.9"/>
+    <circle cx="45" cy="11.8" r="2.4"/>
+    <path d="M48.2 15.8 L55 18.2 L48.2 20.8 Z"/>
+    <rect x="26.6" y="42" width="2.6" height="10" rx="1.3"/>
+  </g>
+
+  <!-- ══ right: hatchery comes down from a declaration ═════════════════ -->
+
+  <!-- The manifest it descends out of: the mandorla of the original, squared
+       into the thing hatchery actually reads. -->
+  <g transform="rotate(-7 752 132)">
+    <rect class="tint" x="644" y="32" width="212" height="204" rx="14"/>
+    <rect class="ink" x="672" y="62" width="130" height="9" rx="4.5"/>
+    <rect class="ink" x="672" y="88" width="156" height="7" rx="3.5"/>
+    <rect class="ink" x="672" y="108" width="116" height="7" rx="3.5"/>
+    <rect class="ink" x="672" y="128" width="144" height="7" rx="3.5"/>
+    <rect class="ink" x="672" y="148" width="98" height="7" rx="3.5"/>
+    <rect class="ink" x="672" y="176" width="130" height="7" rx="3.5"/>
+    <rect class="ink" x="672" y="196" width="74" height="7" rx="3.5"/>
+  </g>
+
+  <!-- The reaching wing: broad blades fanned down and to the left, the middle
+       one leading. Stroked for the same reason the leg is. -->
+  <path class="limb" stroke-width="16" d="M628,164 C596,150 566,142 538,138"/>
+  <path class="limb" stroke-width="18" d="M628,164 C592,158 544,156 478,160"/>
+  <path class="limb" stroke-width="15" d="M628,164 C598,176 570,190 550,206"/>
+
+  <!-- The egg, mid-hatch: two pieces, not one piece with a crack stroked in
+       the page's colour. A crack drawn in the background stops being a crack
+       the moment the background changes, and this file holds in both themes. -->
+  <path class="ink" d="M612,140 L630,126 L646,144 L666,122 L686,142 L706,126 L724,138
+                       C724,180 700,204 668,204 C636,204 612,180 612,140 Z"/>
+  <g transform="rotate(-15 671 92)">
+    <path class="ink" transform="translate(6 -16)"
+          d="M616,120 L634,106 L650,124 L670,102 L690,122 L710,106 L726,118
+             C726,86 700,64 671,64 C642,64 616,88 616,120 Z"/>
+  </g>
+
+  <!-- The gap. It is the whole point of the picture, so it gets a caliper and
+       a name. -->
+  <path class="hair" d="M440,206 L440,218 M440,212 L462,212 M462,206 L462,218"/>
+  <text class="whisper" x="451" y="238" text-anchor="middle">THE SEAM</text>
+</svg>

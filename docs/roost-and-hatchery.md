@@ -38,6 +38,8 @@ each other.
    deeper ▼   an answer at any layer is worthless if the layer under it lies
 ```
 
+![The Creation of Roost. A rooster stands on a small server and reaches a talon to the right; a hatching egg descends from a manifest and reaches a wing to the left; their tips do not quite touch.](roost-and-hatchery-creation.svg)
+
 hatchery comes down from a declaration. roost comes up from a machine. They
 meet in the middle.
 
