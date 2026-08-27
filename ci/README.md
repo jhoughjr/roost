@@ -10,6 +10,23 @@ Forgejo reads workflows from `.forgejo/workflows`, and when that directory is ab
 
 `DEFAULT_ACTIONS_URL` is `self`, so `uses: actions/checkout@v4` resolves inside this forge and never reaches github.com. Every action a workflow names must be mirrored here first, or the run fails at the clone.
 
+**An absent action reads as a credential problem.** Forgejo answers `authentication required: Unauthorized` for a repository that simply does not exist, so the first thing to check is whether the action is mirrored and not whether a token is wrong. Mirrored so far:
+
+```
+actions/checkout   actions/cache   actions/setup-node   actions/upload-artifact
+docker/setup-buildx-action   docker/login-action   docker/build-push-action
+```
+
+Mirror one with a migration, and give the organization a home first:
+
+```sh
+curl -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+  -d '{"clone_addr":"https://github.com/actions/setup-node.git","repo_name":"setup-node","repo_owner":"actions","mirror":false,"service":"git","private":false}' \
+  https://forgejo.jimmyhoughjr.net/api/v1/repos/migrate
+```
+
+A large action can answer `504` and still finish, because the gateway gives up before the migration does. Check the listing before retrying.
+
 ## The job images
 
 `act_runner` runs each job in a container. Two things force a custom image.
@@ -76,6 +93,31 @@ Compiled artifacts then survive between runs, with nothing in the path that can 
 **`actions/cache` does not work on this runner.** It saves an entry and never serves it back. The evidence is direct: one run reported `Cache saved with key: spm-static-v1`, the next reported `Cache not found for input keys: spm-static-v1`, with the key and the version both matching and the 32 MB entry sitting on disk. Getting saves to work at all took two settings that look interchangeable and are not, and it is recorded in the config file. Reads never came back, so every run stayed cold and paid a 31 MB upload on the end of it.
 
 That action was never the right mechanism here. On GitHub it exists because the runner is ephemeral and the cache has to live somewhere else. This runner is a box that stays up, so persisting a directory is the native answer and the action is a workaround for not having one.
+
+## The macOS runner, which has to be built
+
+**Forgejo publishes no macOS runner binary.** Its releases carry linux amd64 and linux arm64 and nothing else, so the mini's runner is built from source:
+
+```sh
+brew install go
+git clone --depth 1 --branch v9.1.1 https://code.forgejo.org/forgejo/runner.git src
+cd src && go build -o ../forgejo-runner ./
+```
+
+Register it in host mode, because the mini runs no docker and the work wants the host anyway. Phoenix signs its build with a certificate in the login keychain, and a container has neither the keychain nor the tools:
+
+```sh
+./forgejo-runner register --no-interactive \
+  --instance https://forgejo.jimmyhoughjr.net --token <token> --name mini-forge \
+  --labels "self-hosted:host,macos:host,arm64:host,mini:host"
+./forgejo-runner daemon --config config.yaml
+```
+
+`ci/act-runner/config-macos.yaml` is that config. The `:host` suffix is what makes a label run on the host instead of in an image.
+
+The label set is what routes work. The opi declares `self-hosted` and `arm64` too, so a job that names only those can land on either box, which `roost/check.yml` intends. `macos` and `mini` are what keep Phoenix's jobs on the mini.
+
+A macOS runner needs nothing else installed. The mini already had node, npm and git, and Phoenix's workflow reads no secrets at all, so it ported with no edits and nothing to reissue.
 
 ## Two rules the box taught us
 

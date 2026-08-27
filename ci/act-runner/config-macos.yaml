@@ -1,0 +1,35 @@
+# act_runner configuration for the mini, for the GitHub independence spike.
+#
+# The mini runs jobs on the host and never in a container, because it has no docker and because the work needs the host anyway.
+# Phoenix signs its build with a certificate in the login keychain, and `scripts/ci/prepare-keychain.sh` reaches for it. A container has neither.
+#
+# Forgejo publishes no macOS runner binary, so this one is built from source. The Linux releases are amd64 and arm64 only.
+log:
+  level: info
+
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 3h
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  # Host mode, so a job runs as this user with this PATH.
+  # `macos` and `mini` are what keep Phoenix's jobs here: the opi runner declares `self-hosted` and `arm64` as well, and no job reaches this box without all four.
+  labels:
+    - "self-hosted:host"
+    - "macos:host"
+    - "arm64:host"
+    - "mini:host"
+
+cache:
+  enabled: true
+  # A host-mode job reaches the runner over loopback, so no gateway address and no published port are involved.
+  # This is the simple case the docker runner is not.
+  proxy_port: 33092
+
+container:
+  network: ""
+  privileged: false
+  options: ""
+  valid_volumes: []
+  force_pull: false
