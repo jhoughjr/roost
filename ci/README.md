@@ -143,6 +143,24 @@ dokku config:set forgejo FORGEJO__storage__MINIO_USE_SSL=false
 
 The hostname stays the same, so the signature still covers the name the client dialed, and nothing else in the configuration changes. Apply the same shape to any service on this box that talks to another one by public name.
 
+## Launch a long deploy detached on the box
+
+A dokku build runs for as long as the client holds the connection, and a Swift build runs for ten minutes or more. If the machine that started it sleeps, the pipe breaks and the build dies part way, leaving a deploy lock and a half-finished image. Three deploys died that way in one evening, and each looked like a failure on the box when the fault was a laptop lid.
+
+Start it on the host instead, so the build belongs to the host:
+
+```sh
+ssh jimmy@opi "nohup sh -c 'ssh dokku@opi ps:rebuild vault > /tmp/rebuild.log 2>&1' >/dev/null 2>&1 &"
+```
+
+The host needs to trust its own dokku endpoint once, or the inner ssh fails on host-key verification:
+
+```sh
+ssh-keyscan -H 192.168.0.103 >> ~/.ssh/known_hosts
+```
+
+This is the same shape as the ssh-to-localhost hop in `bin/status.sh`, for a different reason. That one routes around macOS Local Network Privacy, this one routes around the client going to sleep, and both end with the work owned by the machine that has to finish it.
+
 ## Two rules the box taught us
 
 **A Forgejo config change needs a full stop.** dokku starts the new container while the old one still holds the persistent volume, and Forgejo's queue takes an exclusive LevelDB lock on it. Two instances cannot share one data directory, so a rolling deploy deadlocks with `unable to lock level db`. Use `config:set --no-restart`, then `ps:stop`, then `ps:start`.
