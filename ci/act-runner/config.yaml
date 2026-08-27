@@ -1,0 +1,67 @@
+# act_runner configuration for opi-forge, for the GitHub independence spike.
+#
+# Every label maps to roost-ci:arm64, which already carries shellcheck, git, curl and python3.
+# A `run:` step that fetches a tool is the one hole no forge setting closes, and a job image that already holds the tool is what closes it.
+#
+# The container options point every GitHub host at the loopback address inside the job.
+# That is the pass condition for this spike: a run that stays green with github.com unreachable proves the CI needs nothing from GitHub.
+log:
+  level: info
+
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 3h
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  labels:
+    - "self-hosted:docker://roost-ci:arm64"
+    - "arm64:docker://roost-ci:arm64"
+    - "Linux:docker://roost-ci:arm64"
+    - "ARM64:docker://roost-ci:arm64"
+    - "linux:docker://roost-ci:arm64"
+    - "ubuntu-latest:docker://roost-ci:arm64"
+
+cache:
+  enabled: true
+  # A job talks to a cache *proxy*, and the proxy talks to the cache server. They bind different ports, and only the proxy's is the one a job dials.
+  #
+  # `host` is the address the runner puts in ACTIONS_CACHE_URL. Left to guess it advertises its own bridge address, which a job on its own WORKFLOW network cannot route to.
+  # The docker gateway is reachable from every network on this host, so the runner advertises that.
+  #
+  # `proxy_port` pins the proxy, which defaults to a random port. A random port cannot be published, so the job gets ECONNREFUSED on an address nothing listens to.
+  # `port` pins the cache server instead, and setting that one alone changes nothing a job can see.
+  #
+  # Start the runner with `-p 33091:33091` on a bridge network, or this address answers nothing. Host networking does not work here, because the proxy then binds loopback only.
+  # Leave `host` empty. It is used for BOTH hops, and setting it breaks the inner one:
+  # the proxy then dials the cache server at that address too, and the server lives inside this container, so the dial is refused and the job sees a 502.
+  # `actions_cache_url_override` sets only the job-facing URL, which is the one that actually needs to differ.
+  host: ""
+  proxy_port: 33091
+  actions_cache_url_override: "http://10.0.0.1:33091"
+  # A generated secret changes on every restart, and every restart then invalidates every cache entry.
+  # A fixed one keeps the cache across restarts. Replace it with the output of `openssl rand -hex 40` for a new install.
+  secret: "b7b6b4a1f3c2d8e5a9704f1c6d3b8e2a5c9f0d7b4e1a8c3f6d9b2e5a8c1f4d7b0e3a6c9f"
+
+container:
+  network: ""
+  privileged: false
+  # The block below is a proof tool and not a default. Turn it on to answer "does this repository need GitHub", then turn it off to get work done.
+  #
+  # A shell workflow passes with it on, and so does a Swift package with no dependencies.
+  # A Swift package with dependencies does not, because SwiftPM clones them from github.com. That is the honest limit of the answer.
+  #
+  # The way to pass with it on is a git rewrite rule that sends those clones to local mirrors, and it needs no change to any manifest:
+  #   git config --global url."https://forgejo.jimmyhoughjr.net/mirror/".insteadOf "https://github.com/"
+  #
+  # options: "--add-host github.com:127.0.0.1 --add-host www.github.com:127.0.0.1 --add-host api.github.com:127.0.0.1 --add-host codeload.github.com:127.0.0.1 --add-host objects.githubusercontent.com:127.0.0.1 --add-host raw.githubusercontent.com:127.0.0.1"
+  # A persistent build directory, mounted into every job.
+  #
+  # `actions/cache` round-trips the whole tree through a proxy and a server to achieve what this does for free, and on this runner it saves entries and never serves them back.
+  # A mounted directory keeps compiled artifacts across runs with nothing in the path to fail. A workflow opts in with `swift build --scratch-path /swiftcache/<repo>`.
+  #
+  # The trade is that jobs share it, so a workflow picks a subdirectory of its own and nothing collides.
+  options: "--volume /home/jimmy/forge-swift:/swiftcache"
+  valid_volumes:
+    - /home/jimmy/forge-swift
+  force_pull: false

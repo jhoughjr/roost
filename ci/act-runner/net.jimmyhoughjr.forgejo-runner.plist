@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Forgejo runner on the mini, as a launchd agent.
+
+  PATH is set explicitly. launchd gives an agent a minimal PATH with no /opt/homebrew/bin,
+  a host-mode job inherits the daemon's environment, and the job then fails with
+  `Cannot find: node in PATH`, which reads like a missing install and is not one.
+
+  Install:
+    cp net.jimmyhoughjr.forgejo-runner.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.jimmyhoughjr.forgejo-runner.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>net.jimmyhoughjr.forgejo-runner</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jimmyhoughjr/forgejo-runner/forgejo-runner</string>
+    <string>daemon</string>
+    <string>--config</string>
+    <string>/Users/jimmyhoughjr/forgejo-runner/config.yaml</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/jimmyhoughjr/forgejo-runner</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/jimmyhoughjr</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jimmyhoughjr/forgejo-runner/daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jimmyhoughjr/forgejo-runner/daemon.log</string>
+</dict>
+</plist>
