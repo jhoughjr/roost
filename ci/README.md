@@ -57,6 +57,22 @@ That sends every clone to a local mirror while `Package.swift` and `Package.reso
 
 Register a runner before the first start, and mint the token with `gitea actions generate-runner-token` inside the Forgejo container.
 
+## Caching: use the mounted directory, not the cache action
+
+Vault's gate went from 6 minutes 31 seconds cold to **1 minute 46 seconds warm**, and the first number was 17 minutes before the Swift image was on the box. The mechanism is a directory, not `actions/cache`.
+
+The runner mounts `/home/jimmy/forge-swift` into every job at `/swiftcache`, and a workflow opts in:
+
+```yaml
+run: swift test --no-parallel --scratch-path /swiftcache/<repo>
+```
+
+Compiled artifacts then survive between runs, with nothing in the path that can fail. Each workflow picks a subdirectory of its own so jobs do not collide.
+
+**`actions/cache` does not work on this runner.** It saves an entry and never serves it back. The evidence is direct: one run reported `Cache saved with key: spm-static-v1`, the next reported `Cache not found for input keys: spm-static-v1`, with the key and the version both matching and the 32 MB entry sitting on disk. Getting saves to work at all took two settings that look interchangeable and are not, and it is recorded in the config file. Reads never came back, so every run stayed cold and paid a 31 MB upload on the end of it.
+
+That action was never the right mechanism here. On GitHub it exists because the runner is ephemeral and the cache has to live somewhere else. This runner is a box that stays up, so persisting a directory is the native answer and the action is a workaround for not having one.
+
 ## Two rules the box taught us
 
 **A Forgejo config change needs a full stop.** dokku starts the new container while the old one still holds the persistent volume, and Forgejo's queue takes an exclusive LevelDB lock on it. Two instances cannot share one data directory, so a rolling deploy deadlocks with `unable to lock level db`. Use `config:set --no-restart`, then `ps:stop`, then `ps:start`.

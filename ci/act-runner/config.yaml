@@ -55,6 +55,13 @@ container:
   #   git config --global url."https://forgejo.jimmyhoughjr.net/mirror/".insteadOf "https://github.com/"
   #
   # options: "--add-host github.com:127.0.0.1 --add-host www.github.com:127.0.0.1 --add-host api.github.com:127.0.0.1 --add-host codeload.github.com:127.0.0.1 --add-host objects.githubusercontent.com:127.0.0.1 --add-host raw.githubusercontent.com:127.0.0.1"
-  options: ""
-  valid_volumes: []
+  # A persistent build directory, mounted into every job.
+  #
+  # `actions/cache` round-trips the whole tree through a proxy and a server to achieve what this does for free, and on this runner it saves entries and never serves them back.
+  # A mounted directory keeps compiled artifacts across runs with nothing in the path to fail. A workflow opts in with `swift build --scratch-path /swiftcache/<repo>`.
+  #
+  # The trade is that jobs share it, so a workflow picks a subdirectory of its own and nothing collides.
+  options: "--volume /home/jimmy/forge-swift:/swiftcache"
+  valid_volumes:
+    - /home/jimmy/forge-swift
   force_pull: false
