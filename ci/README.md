@@ -161,6 +161,34 @@ ssh-keyscan -H 192.168.0.103 >> ~/.ssh/known_hosts
 
 This is the same shape as the ssh-to-localhost hop in `bin/status.sh`, for a different reason. That one routes around macOS Local Network Privacy, this one routes around the client going to sleep, and both end with the work owned by the machine that has to finish it.
 
+## Probe the artifact store before you trust it
+
+`probes/s3-conformance` makes the calls Forgejo makes against the S3 endpoint, with the client version
+Forgejo carries, and names the first call that fails.
+
+Use it whenever the artifact store changes, and before a deploy of it:
+
+```
+docker run --rm -e S3_ENDPOINT=... -e S3_ACCESS=... -e S3_SECRET=... \
+  -v "$PWD/ci/probes/s3-conformance:/src" -w /src golang:1.24 \
+  sh -c 'go mod tidy >/dev/null 2>&1; go run main.go'
+```
+
+It exists because a storage fault is very hard to read from either end. Forgejo reports one as
+`Artifact service responded with 500` against whichever step was running, and that is usually the
+merge, so the message names the merge when the fault is elsewhere. The server sees nothing, because
+it believes it answered the request. One absent header on a read cost a night of reading logs, and
+this probe named it on the first run.
+
+Two things it checks that a smaller probe would miss. A read of the body is separate from a head,
+because a streamed read builds its own headers and can drop one that the head still carries. And a
+write of unknown length is separate from a write of known length, because Forgejo writes the merged
+artifact without a length, which streams and signs the body in chunks.
+
+Hold the client version in step with the forge. minio-go v7.0.90 accepts an absent `Last-Modified` on
+a read and v7.0.98 refuses it, so an older client passes an endpoint that Forgejo cannot use. `mc`
+carries the older one.
+
 ## Two rules the box taught us
 
 **A Forgejo config change needs a full stop.** dokku starts the new container while the old one still holds the persistent volume, and Forgejo's queue takes an exclusive LevelDB lock on it. Two instances cannot share one data directory, so a rolling deploy deadlocks with `unable to lock level db`. Use `config:set --no-restart`, then `ps:stop`, then `ps:start`.
