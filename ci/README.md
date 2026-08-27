@@ -136,6 +136,23 @@ PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
 dokku nginx:set forgejo client-max-body-size 1024m
 ```
 
+## Where a forge-specific workflow belongs
+
+In the repository, beside the GitHub one, and never as a patch applied to the forge's copy.
+
+Forgejo reads `.forgejo/workflows` when that directory exists, and falls back to `.github/workflows` when it does not. GitHub ignores `.forgejo` entirely. So a repository can carry both, they stay independent, and the two copies of the repository stay byte-identical.
+
+```
+.github/workflows/ci.yml     what GitHub runs
+.forgejo/workflows/ci.yml    what the forge runs
+```
+
+A workflow that needs no adaptation keeps one file and the fallback finds it, which is the case for `roost` and `hatchery`. A workflow that needs a different image, an older action, or a different scratch path gets a second file, and both are reviewable in the same pull request.
+
+The alternative is to edit the forge's copy directly, and it is a trap. The adaptation then lives only on the forge, no one reading either repository can see it, and the next person to push overwrites it without knowing.
+
+Note the fallback is all-or-nothing. Once `.forgejo/workflows` exists the forge stops reading `.github/workflows` for that repository, so the new file is a whole workflow and never a patch.
+
 ## What a repository costs to move
 
 A workflow with no `container:` costs nothing. It runs unchanged.
@@ -143,3 +160,15 @@ A workflow with no `container:` costs nothing. It runs unchanged.
 A workflow with a `container:` costs one line for each job that has one, because the image has to carry Node.
 
 A workflow that downloads a tool in a `run:` step costs an image that carries the tool, and nothing in the workflow when the step already checks for it.
+
+A workflow that uploads an artifact costs a version pin. `actions/upload-artifact@v4` and later speak an artifact API the forge does not serve, and a run fails with `GHESNotSupportedError: upload-artifact@v4+ ... not currently supported on GHES`. `v3` speaks the older API and works. This is the same shape as the cache: a newer action talking to a service the forge does not implement, and the fix is the last version that speaks the old protocol.
+
+## The shadow shares some ground with GitHub
+
+The forge shadows GitHub rather than replacing it, so the same repository runs on both. Two directories on the mini are written by both, and that is worth knowing before reading a board.
+
+`~/builds/phoenix` holds the published build zips and an `index.json`, and `statusgen`'s `builds.py` reads that manifest. A forge run publishes there exactly as a GitHub run does, so **the board's Builds section already shows forge-produced builds with no mark saying so**. That is what statusgen#65 is for.
+
+`~/mirrors/phoenix-electron.git` is the mirror `sync-mirror.sh` maintains, and both systems run that script. Its `origin` points at GitHub because a GitHub run seeded it, so a forge run following it reaches github.com and fails on credentials. Re-pointing it would change what the GitHub runs do, so a forge run gets its own `MIRROR_DIR` instead and GitHub's mirror is left alone.
+
+The general rule: anything a workflow writes outside its workspace is shared with the other forge, and the shadow will land in it.
