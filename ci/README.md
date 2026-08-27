@@ -119,6 +119,13 @@ The label set is what routes work. The opi declares `self-hosted` and `arm64` to
 
 A macOS runner needs nothing else installed. The mini already had node, npm and git, and Phoenix's workflow reads no secrets at all, so it ported with no edits and nothing to reissue.
 
+**Start the daemon with Homebrew on the PATH.** A host-mode job inherits the daemon's environment, and a daemon started from a non-interactive shell or from launchd gets a minimal PATH with no `/opt/homebrew/bin`. The job then fails with `Cannot find: node in PATH` and `npm: command not found`, which reads like a missing install and is not one. This is the same trap `bin/ci-live-report.sh` already documents for launchd.
+
+```sh
+PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+  ./forgejo-runner daemon --config config.yaml
+```
+
 ## Two rules the box taught us
 
 **A Forgejo config change needs a full stop.** dokku starts the new container while the old one still holds the persistent volume, and Forgejo's queue takes an exclusive LevelDB lock on it. Two instances cannot share one data directory, so a rolling deploy deadlocks with `unable to lock level db`. Use `config:set --no-restart`, then `ps:stop`, then `ps:start`.
