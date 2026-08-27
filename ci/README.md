@@ -59,7 +59,11 @@ Register a runner before the first start, and mint the token with `gitea actions
 
 ## Caching: use the mounted directory, not the cache action
 
-Vault's gate went from 6 minutes 31 seconds cold to **1 minute 46 seconds warm**, and the first number was 17 minutes before the Swift image was on the box. The mechanism is a directory, not `actions/cache`.
+Vault's gate went from 6 minutes 31 seconds cold to **1 minute 46 seconds warm**, and two consecutive warm runs measured 106 and 105 seconds, so the number holds. The 17 minutes an earlier run took was mostly a one-time pull of the 4.53 GB Swift image and not compilation.
+
+`swift-pdf-builder` uses the same mechanism and runs in 60 seconds, against 91 before. It gains little from a warm build, because it declares no dependencies, and it still got faster by no longer uploading 31 MB to a cache that never served it back.
+
+The mechanism is a directory, not `actions/cache`.
 
 The runner mounts `/home/jimmy/forge-swift` into every job at `/swiftcache`, and a workflow opts in:
 
