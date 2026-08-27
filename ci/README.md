@@ -126,6 +126,23 @@ PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
   ./forgejo-runner daemon --config config.yaml
 ```
 
+## Never route a service to a service through the tunnel
+
+Forgejo and vault both run on the pi, and `s3.jimmyhoughjr.net` resolves publicly, so every artifact chunk left the box, crossed Cloudflare, and came back to the same box. That cost more than latency.
+
+**Cloudflare strips response headers an S3 client needs.** Vault answers a `PUT` with `Last-Modified`, minio-go parses that header on every upload response, and it refuses an absent one. Through the tunnel the header did not arrive, and Forgejo failed every artifact upload with `Last-Modified time format is invalid, failed with unable to parse`, which reads like a malformed value and is a missing one. Probing vault directly over the local path returns the header, so the origin was always correct.
+
+**Cloudflare challenges scripted clients.** A signed request from a script gets `403` with `error code: 1010`, which is bot protection and not an authorization failure. Diagnosing an S3 problem from outside the box will mislead you.
+
+The fix is to resolve the name locally and skip the tunnel:
+
+```sh
+dokku docker-options:add forgejo deploy "--add-host s3.jimmyhoughjr.net:10.0.0.1"
+dokku config:set forgejo FORGEJO__storage__MINIO_USE_SSL=false
+```
+
+The hostname stays the same, so the signature still covers the name the client dialed, and nothing else in the configuration changes. Apply the same shape to any service on this box that talks to another one by public name.
+
 ## Two rules the box taught us
 
 **A Forgejo config change needs a full stop.** dokku starts the new container while the old one still holds the persistent volume, and Forgejo's queue takes an exclusive LevelDB lock on it. Two instances cannot share one data directory, so a rolling deploy deadlocks with `unable to lock level db`. Use `config:set --no-restart`, then `ps:stop`, then `ps:start`.
