@@ -28,6 +28,15 @@ cache:
 container:
   network: ""
   privileged: false
-  options: "--add-host github.com:127.0.0.1 --add-host www.github.com:127.0.0.1 --add-host api.github.com:127.0.0.1 --add-host codeload.github.com:127.0.0.1 --add-host objects.githubusercontent.com:127.0.0.1 --add-host raw.githubusercontent.com:127.0.0.1"
+  # The block below is a proof tool and not a default. Turn it on to answer "does this repository need GitHub", then turn it off to get work done.
+  #
+  # A shell workflow passes with it on, and so does a Swift package with no dependencies.
+  # A Swift package with dependencies does not, because SwiftPM clones them from github.com. That is the honest limit of the answer.
+  #
+  # The way to pass with it on is a git rewrite rule that sends those clones to local mirrors, and it needs no change to any manifest:
+  #   git config --global url."https://forgejo.jimmyhoughjr.net/mirror/".insteadOf "https://github.com/"
+  #
+  # options: "--add-host github.com:127.0.0.1 --add-host www.github.com:127.0.0.1 --add-host api.github.com:127.0.0.1 --add-host codeload.github.com:127.0.0.1 --add-host objects.githubusercontent.com:127.0.0.1 --add-host raw.githubusercontent.com:127.0.0.1"
+  options: ""
   valid_volumes: []
   force_pull: false

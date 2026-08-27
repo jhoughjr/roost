@@ -43,7 +43,17 @@ docker run -d --name act_runner --restart unless-stopped -w /data \
   code.forgejo.org/forgejo/runner:9 forgejo-runner daemon --config /data/config.yaml
 ```
 
-The options point every GitHub host at the loopback address inside a job. A run that stays green with them set needs nothing from GitHub, which is the only way to know rather than to hope.
+The container options can point every GitHub host at the loopback address inside a job. A run that stays green with them set needs nothing from GitHub, which is the only way to know rather than to hope. They ship commented out, because they are a proof tool and not a default.
+
+**SwiftPM is the limit of that proof.** A Swift package resolves its dependencies by cloning them from github.com, so a package with dependencies fails with the block on, at `fatal: unable to access 'https://github.com/apple/...'`. A shell workflow passes, and so does a Swift package that declares no dependencies. That difference is easy to mistake for success, so read what the repository actually depends on before believing a green run.
+
+The way to pass with the block on is a git rewrite rule, and it needs no change to any manifest:
+
+```sh
+git config --global url."https://forgejo.jimmyhoughjr.net/mirror/".insteadOf "https://github.com/"
+```
+
+That sends every clone to a local mirror while `Package.swift` and `Package.resolved` stay as they are. MWServer's `build.yml` already uses the same pattern pointed at GitHub with a PAT, so only the target changes. The cost is a mirror of every dependency, which is the same shape as the action mirror list.
 
 Register a runner before the first start, and mint the token with `gitea actions generate-runner-token` inside the Forgejo container.
 
