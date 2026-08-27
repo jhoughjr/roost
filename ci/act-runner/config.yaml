@@ -1,0 +1,33 @@
+# act_runner configuration for opi-forge, for the GitHub independence spike.
+#
+# Every label maps to roost-ci:arm64, which already carries shellcheck, git, curl and python3.
+# A `run:` step that fetches a tool is the one hole no forge setting closes, and a job image that already holds the tool is what closes it.
+#
+# The container options point every GitHub host at the loopback address inside the job.
+# That is the pass condition for this spike: a run that stays green with github.com unreachable proves the CI needs nothing from GitHub.
+log:
+  level: info
+
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 3h
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  labels:
+    - "self-hosted:docker://roost-ci:arm64"
+    - "arm64:docker://roost-ci:arm64"
+    - "Linux:docker://roost-ci:arm64"
+    - "ARM64:docker://roost-ci:arm64"
+    - "linux:docker://roost-ci:arm64"
+    - "ubuntu-latest:docker://roost-ci:arm64"
+
+cache:
+  enabled: true
+
+container:
+  network: ""
+  privileged: false
+  options: "--add-host github.com:127.0.0.1 --add-host www.github.com:127.0.0.1 --add-host api.github.com:127.0.0.1 --add-host codeload.github.com:127.0.0.1 --add-host objects.githubusercontent.com:127.0.0.1 --add-host raw.githubusercontent.com:127.0.0.1"
+  valid_volumes: []
+  force_pull: false
