@@ -24,6 +24,12 @@ runner:
 
 cache:
   enabled: true
+  # The cache server runs inside the runner container, and act_runner puts every job on its own WORKFLOW-* network.
+  # Left to guess, it advertises its own bridge address, which a job cannot route to, and `actions/cache` fails with `getCacheEntry failed: connect ETIMEDOUT`.
+  # The docker gateway is reachable from every network on this host, so the runner advertises that instead, and the container publishes the port to meet it.
+  # Start the runner with `-p 33091:33091` or this address answers nothing.
+  host: "10.0.0.1"
+  port: 33091
 
 container:
   network: ""
