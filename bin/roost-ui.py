@@ -6,7 +6,8 @@ A Claude-Code-style interface in five tabs:
   2 monitor   live fleet: pi host, app containers, node watts (via pulse)
   3 config    ~/.roostrc, derived settings, per-app config viewer
   4 docs      playbook / getting-started / TODO in a section-aware pager
-  5 backups   the backup service: schedule, last run, repositories; r/b/c act
+  5 backups   the backup service, and a browser into its snapshots:
+              status -> snapshots -> tree, with extract and restore
 
 shift+tab cycles tabs from anywhere; on tabs 2-5 the digits 1-5 jump
 straight to a tab and q returns to the console. Stdlib only.
@@ -350,6 +351,12 @@ class Backups:
         self.fetching = False
         self.busy = ""              # the action now running, for the header
         self.note = ""              # what the last action said
+        # The browser's current listing. One at a time: every navigation step
+        # crosses ssh, so a second request while one is in flight would only
+        # race the first.
+        self.listing = None
+        self.listing_err = ""
+        self.loading = False
         self.ev = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -395,6 +402,63 @@ class Backups:
             self.note = str(e)[:120]
         self.busy = ""
         self.refresh()
+
+    def load_snapshots(self, repo):
+        self._list("snapshots", ["--snapshots", repo, "--json"], repo=repo)
+
+    def load_tree(self, repo, snap, path):
+        self._list("tree", ["--ls", repo, "--snapshot", snap, "--path", path, "--json"],
+                   repo=repo, snap=snap, path=path)
+
+    def _list(self, kind, args, **meta):
+        """Fetch one listing in the background. The tab keeps drawing meanwhile."""
+        if self.loading:
+            return
+
+        def work():
+            self.loading = True
+            self.listing_err = ""
+            try:
+                r = self._call(args, 300)
+                rows = json.loads(r.stdout) if r.stdout.strip() else []
+                if kind == "snapshots":
+                    rows.reverse()
+                meta["kind"], meta["rows"] = kind, rows
+                self.listing = meta
+            except Exception as e:               # noqa: BLE001 - surface any failure
+                self.listing_err = (str(e) or "listing failed")[:160]
+            self.loading = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def extract(self, repo, snap, path, target):
+        self._long("extract", ["--extract", repo, "--snapshot", snap,
+                               "--path", path, "--to", target])
+
+    def restore(self, repo, snap, path, confirm=None):
+        args = ["--restore", repo, "--snapshot", snap, "--path", path]
+        if confirm:
+            args += ["--confirm", confirm]
+        self._long("restore", args)
+
+    def _long(self, label, args):
+        """Run one write action. Its output lands under `last action`."""
+        if self.busy:
+            return
+
+        def work():
+            self.busy = label
+            self.note = ""
+            try:
+                r = self._call(args, 7200)
+                said = (r.stdout or r.stderr).strip()
+                self.note = said or ("%s finished" % label)
+            except Exception as e:               # noqa: BLE001
+                self.note = str(e)[:400]
+            self.busy = ""
+            self.refresh()
+
+        threading.Thread(target=work, daemon=True).start()
 
     def age(self):
         return (time.monotonic() - self.t0) if self.t0 else None
@@ -558,6 +622,13 @@ class UI:
         self.mon_scroll = 0
         self.cfg_scroll = 0
         self.bak_scroll = 0
+        self.bak_view = "status"      # status -> snapshots -> tree
+        self.bak_sel = 0
+        self.bak_repo = ""
+        self.bak_snap = ""
+        self.bak_path = ""
+        self.bak_stack = []           # the paths walked into, for going back up
+        self.bak_prompt = None        # {"kind", "buf", "label"} while typing
         self.cfg_sel = 0
         self.cfg_app = ""
         self.cfg_lines = []           # fetched `roost config <app>` output
@@ -873,7 +944,7 @@ class UI:
         return L
 
     # ---- config tab ---------------------------------------------------
-    def backup_lines(self):
+    def backup_status_lines(self):
         b = self.backups
         d = b.data
         L = []
@@ -888,6 +959,7 @@ class UI:
         upd = "reading …" if b.fetching else "read %s ago" % human_age(int(b.age() or 0))
         busy = " · %s running …" % b.busy if b.busy else ""
         L.append(("s", "%s · r refresh · b back up now · c check%s" % (upd, busy)))
+        L.append(("d", "up/down pick a repository · enter browse its snapshots"))
         L.append(("", ""))
 
         svc = d.get("service", {})
@@ -911,16 +983,17 @@ class UI:
         elif not sto.get("mounted"):
             L.append(("e", "  no repositories found, so the drive is probably not mounted"))
         else:
-            for r in sto.get("repos", []):
+            for i, r in enumerate(sto.get("repos", [])):
+                mark = "▸" if i == self.bak_sel else " "
                 if r.get("error"):
-                    L.append(("y", "  %-14s %s" % (r.get("name", "?"), r["error"])))
+                    L.append(("y", "%s %-14s %s" % (mark, r.get("name", "?"), r["error"])))
                     continue
                 n = r.get("snapshots") or 0
                 hours = r.get("age_hours")
                 seen = human_age(int(hours * 3600)) + " ago" if hours is not None else "unknown"
-                L.append((TONE_ATTR.get(r.get("tone"), "d"),
-                          "  %-14s %3d snapshot%s %8s  %s"
-                          % (r.get("name", "?"), n, "s" if n != 1 else " ",
+                L.append(("p" if i == self.bak_sel else TONE_ATTR.get(r.get("tone"), "d"),
+                          "%s %-14s %3d snapshot%s %8s  %s"
+                          % (mark, r.get("name", "?"), n, "s" if n != 1 else " ",
                              size_h(r.get("size_bytes")), seen)))
 
         if b.note:
@@ -928,6 +1001,66 @@ class UI:
             L.append(("h", "last action"))
             for line in b.note.splitlines()[:8]:
                 L.append(("s", "  " + line))
+        return L
+
+    def backup_snapshot_lines(self):
+        b = self.backups
+        L = [("h", "snapshots · %s" % self.bak_repo),
+             ("d", "up/down select · enter open · q back to status")]
+        if b.loading:
+            L.append(("d", "reading …"))
+            return L
+        if b.listing_err:
+            L.append(("e", b.listing_err))
+            return L
+        rows = (b.listing or {}).get("rows") or []
+        if not rows:
+            L.append(("d", "no snapshots"))
+            return L
+        for i, r in enumerate(rows):
+            mark = "▸" if i == self.bak_sel else " "
+            L.append(("p" if i == self.bak_sel else "",
+                      "%s %-10s %-19s %-10s %s"
+                      % (mark, r.get("id", "?"), (r.get("time") or "")[:19],
+                         ",".join(r.get("tags") or []),
+                         " ".join(r.get("paths") or []))))
+        return L
+
+    def backup_tree_lines(self):
+        b = self.backups
+        where = self.bak_path or "/"
+        L = [("h", "%s · %s · %s" % (self.bak_repo, self.bak_snap, where)),
+             ("d", "enter open · left up · e extract · R restore · q back")]
+        if b.loading:
+            L.append(("d", "reading …"))
+            return L
+        if b.listing_err:
+            L.append(("e", b.listing_err))
+            return L
+        rows = (b.listing or {}).get("rows") or []
+        if not rows:
+            L.append(("d", "nothing here"))
+            return L
+        for i, e in enumerate(rows):
+            mark = "▸" if i == self.bak_sel else " "
+            kind = "/" if e.get("type") == "dir" else " "
+            size = "" if e.get("type") == "dir" else size_h(e.get("size"))
+            L.append(("p" if i == self.bak_sel else "",
+                      "%s %-9s %s%s" % (mark, size, e.get("name", "?"), kind)))
+        return L
+
+    def backup_lines(self):
+        if self.bak_view == "snapshots":
+            L = self.backup_snapshot_lines()
+        elif self.bak_view == "tree":
+            L = self.backup_tree_lines()
+        else:
+            L = self.backup_status_lines()
+        p = self.bak_prompt
+        if p:
+            L.append(("", ""))
+            L.append(("y", "%s%s" % (p["label"], p["buf"])))
+            L.append(("d", "enter confirm · esc cancel"))
         return L
 
     def config_lines(self):
@@ -1172,8 +1305,14 @@ class UI:
                 hint = "up/down select · enter open · 1-5 tabs · q console"
         elif self.tab == 4:
             self.bak_scroll = self.draw_list_tab(self.backup_lines(), self.bak_scroll)
-            hint = ("r refresh · b back up now · c check"
-                    " · up/down scroll · 1-5 tabs · q console")
+            if self.bak_view == "tree":
+                hint = ("enter open · left up · e extract · R restore"
+                        " · q back · 1-5 tabs")
+            elif self.bak_view == "snapshots":
+                hint = "up/down select · enter open · q back · 1-5 tabs"
+            else:
+                hint = ("r refresh · b back up now · c check · enter browse"
+                        " · 1-5 tabs · q console")
         put(scr, self.h - 1, 1, hint, attr("s"))
         scr.refresh()
 
@@ -1186,6 +1325,9 @@ class UI:
                 self.stats.refresh()
             elif self.tab == 4:
                 self.backups.refresh()
+            return
+        if self.tab == 4:
+            self.handle_backups(ch)
             return
         if self.tab == 3 and self.docview:
             if self.docview.handle(ch, max(1, self.h - 5)) == "close":
@@ -1236,21 +1378,105 @@ class UI:
                 self.doc_sel = min(len(DOCS) - 1, self.doc_sel + 1)
             elif ch in ("\n", "\r", curses.KEY_ENTER):
                 self.open_doc_by_index(self.doc_sel)
-        elif self.tab == 4:
-            if ch == "r":
-                self.backups.refresh()
+
+    def selected_row(self):
+        rows = (self.backups.listing or {}).get("rows") or []
+        return rows[min(self.bak_sel, len(rows) - 1)] if rows else None
+
+    def open_backup_listing(self, loader, *args):
+        """Move to a new listing. The old one is dropped so the tab shows `reading`."""
+        self.backups.listing = None
+        self.bak_sel = 0
+        loader(*args)
+
+    def submit_backup_prompt(self):
+        p, b, sel = self.bak_prompt, self.backups, self.selected_row()
+        self.bak_prompt = None
+        if not sel:
+            return
+        if p["kind"] == "extract":
+            b.extract(self.bak_repo, self.bak_snap, sel["path"], p["buf"])
+        else:
+            # The typed path must repeat the target exactly. Anything else stays a
+            # dry run, and that rule lives in backup-status.py, not in this tab.
+            b.restore(self.bak_repo, self.bak_snap, sel["path"], p["buf"] or None)
+
+    def handle_backups(self, ch):
+        """Keys on the backups tab: status, then snapshots, then the tree."""
+        b = self.backups
+        # An open prompt owns the keyboard.
+        if self.bak_prompt:
+            if ch == "\x1b":
+                self.bak_prompt = None
+            elif ch in ("\n", "\r", curses.KEY_ENTER):
+                self.submit_backup_prompt()
+            elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+                self.bak_prompt["buf"] = self.bak_prompt["buf"][:-1]
+            elif isinstance(ch, str) and len(ch) == 1 and ch >= " ":
+                self.bak_prompt["buf"] += ch
+            return
+
+        rows = (b.listing or {}).get("rows") or []
+        up, down = (curses.KEY_UP, "k"), (curses.KEY_DOWN, "j")
+
+        if self.bak_view == "status":
+            repos = ((b.data or {}).get("storage") or {}).get("repos") or []
+            if ch in ("q", "\x1b", "\x03"):
+                self.tab = 0
+            elif ch == "r":
+                b.refresh()
             elif ch == "b":
-                self.backups.act("run")
+                b.act("run")
             elif ch == "c":
-                self.backups.act("check")
-            elif ch in (curses.KEY_UP, "k"):
-                self.bak_scroll += 1
-            elif ch in (curses.KEY_DOWN, "j"):
-                self.bak_scroll = max(0, self.bak_scroll - 1)
-            elif ch == curses.KEY_PPAGE:
-                self.bak_scroll += self.page()
-            elif ch == curses.KEY_NPAGE:
-                self.bak_scroll = max(0, self.bak_scroll - self.page())
+                b.act("check")
+            elif ch in up:
+                self.bak_sel = max(0, self.bak_sel - 1)
+            elif ch in down:
+                self.bak_sel = min(max(0, len(repos) - 1), self.bak_sel + 1)
+            elif ch in ("\n", "\r", curses.KEY_ENTER) and repos:
+                self.bak_repo = repos[min(self.bak_sel, len(repos) - 1)]["name"]
+                self.bak_view = "snapshots"
+                self.open_backup_listing(b.load_snapshots, self.bak_repo)
+            return
+
+        if self.bak_view == "snapshots":
+            if ch in ("q", "\x1b"):
+                self.bak_view, self.bak_sel = "status", 0
+            elif ch in up:
+                self.bak_sel = max(0, self.bak_sel - 1)
+            elif ch in down:
+                self.bak_sel = min(max(0, len(rows) - 1), self.bak_sel + 1)
+            elif ch in ("\n", "\r", curses.KEY_ENTER) and rows:
+                self.bak_snap = self.selected_row().get("id") or "latest"
+                self.bak_view, self.bak_path, self.bak_stack = "tree", "", []
+                self.open_backup_listing(b.load_tree, self.bak_repo, self.bak_snap, "")
+            return
+
+        # tree
+        sel = self.selected_row()
+        if ch in ("q", "\x1b"):
+            self.bak_view = "snapshots"
+            self.open_backup_listing(b.load_snapshots, self.bak_repo)
+        elif ch in up:
+            self.bak_sel = max(0, self.bak_sel - 1)
+        elif ch in down:
+            self.bak_sel = min(max(0, len(rows) - 1), self.bak_sel + 1)
+        elif ch in ("\n", "\r", curses.KEY_ENTER) and sel and sel.get("type") == "dir":
+            self.bak_stack.append(self.bak_path)
+            self.bak_path = sel["path"]
+            self.open_backup_listing(b.load_tree, self.bak_repo, self.bak_snap, self.bak_path)
+        elif ch == curses.KEY_LEFT and self.bak_stack:
+            self.bak_path = self.bak_stack.pop()
+            self.open_backup_listing(b.load_tree, self.bak_repo, self.bak_snap, self.bak_path)
+        elif ch == "e" and sel:
+            self.bak_prompt = {"kind": "extract",
+                               "buf": os.path.expanduser("~/roost-restore/") + sel.get("name", "out"),
+                               "label": "extract to a NEW path: "}
+        elif ch == "R" and sel:
+            # Typing the path is the gate. A keystroke is too cheap for the one
+            # action here that cannot be undone.
+            self.bak_prompt = {"kind": "restore", "buf": "",
+                               "label": "RESTORE IN PLACE. Type %s to confirm: " % sel.get("path", "")}
 
     def handle(self, ch):
         # Handle mouse events at the top, before anything else
