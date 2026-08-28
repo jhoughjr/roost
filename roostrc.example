@@ -128,3 +128,16 @@ ROOST_STATUS_SITE=$HOME/status-site
 #ROOST_HATCHERY_BOARD=clauffice
 # serve requires a token whenever it binds off-host, which a polled serve does.
 #ROOST_HATCHERY_TOKEN=
+
+# backup service (bin/backup-status.py, and tab 5 of `roost ui`) — optional.
+# The service and the repositories sit on different machines, so each is named
+# separately. Every value below is the built-in default, and the file only needs
+# the ones that differ.
+# The host that runs the nightly backup, holding cron and the run state.
+#ROOST_BACKUP_SERVICE_HOST=jimmy@opi.local
+# The host that holds the restic repositories. Unset follows ROOST_STATUS_RUNNER.
+#ROOST_BACKUP_REPO_HOST=
+#ROOST_BACKUP_REPO_DIR=~/backupdrive/restic
+#ROOST_BACKUP_PASSWORD_FILE=~/.config/opi-backup/restic-password
+#ROOST_BACKUP_RESTIC=~/bin/restic
+#ROOST_BACKUP_SCRIPT=~/bin/opi-backup.sh

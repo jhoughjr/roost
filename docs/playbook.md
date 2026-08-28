@@ -515,6 +515,13 @@ Together they store about 3 GB, because the docker images and the build caches
 are most of the disk and they rebuild. `restic check` runs on every pass, and
 `docs/opi-backup-restore.md` carries the restore order.
 
+`roost backup` reports that service from any machine. It reads the schedule and
+the last run from the service host, and the repositories from the storage host,
+and it reports an unreachable host rather than staying quiet about it.
+`roost backup --run` starts a backup, and `roost backup --check` verifies every
+repository. Tab 5 of `roost ui` draws the same reading and binds those two
+actions to `b` and `c`.
+
 The earlier `roost backup` (bin/backup-roost.sh) is retired. It pulled the
 vault and watts storage mounts to a Mac, and `/var/lib/dokku` already holds
 both. It also ran as a launchd agent that reached the opi over the LAN, so the
