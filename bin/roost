@@ -7,7 +7,7 @@
 #   roost stats                                  run configured board-stat collectors
 #   roost tapo [--json|--watch|--discover]       read Tapo smart plugs (wall watts)
 #   roost ha-scoop [--days N|--json|--entities]  copy HA hourly power stats into pulse
-#   roost backup [--json|--run|--check]          backup service state, start or verify a run
+#   roost backup [--json|--run|--check|--serve]  backup state, run, verify, or a local web page
 #   roost status ["message"]                     push status site (fleet+history+ledger)
 #   roost kick                                   run the status runner's hourly deploy now
 #   roost rollout [--kick]                       pull roost+statusgen on every writer machine

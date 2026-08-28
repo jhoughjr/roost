@@ -552,6 +552,14 @@ write unless `--confirm` repeats the path exactly. It refuses entirely for
 `opi-critical`, whose snapshots hold the staging directory that every run wipes:
 extract the tar and follow `docs/opi-backup-restore.md` instead.
 
+`roost backup --serve` presents the same thing as a web page, the way
+`hatchery serve` does. It binds 127.0.0.1 and it is started by a person at a
+shell, so there is nobody else to authenticate and no public surface: that is
+what makes it safe to offer restore from a browser at all. Binding anywhere
+else needs `--token`, and every request then carries it. The page browses
+snapshots, extracts to a new directory, and restores in place behind the same
+rules the command line uses, because it calls the same code.
+
 Tab 5 of `roost ui` does the same walk without the command line. The status view
 lists the repositories, `enter` opens one repository's snapshots newest first,
 and `enter` again walks the snapshot's tree: `enter` descends, `left` goes back
