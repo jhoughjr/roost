@@ -69,7 +69,11 @@ container:
   # The trade is real. A job that can reach the host's docker daemon can do anything on the host,
   # so this suits a forge whose repositories are all ours and would not suit one that takes work
   # from outside.
-  options: "--volume /home/jimmy/forge-swift:/swiftcache --volume /var/run/docker.sock:/var/run/docker.sock"
+  # The forge is named inside a job so SwiftPM can resolve dependencies from it, and the name
+  # resolves to Cloudflare from here as it does everywhere else. Pointing it at the docker
+  # gateway keeps the clone on the LAN, and the box holds a certificate for the name, so TLS
+  # still verifies. Without this a dependency clone leaves the network and comes back.
+  options: "--volume /home/jimmy/forge-swift:/swiftcache --volume /var/run/docker.sock:/var/run/docker.sock --add-host forgejo.jimmyhoughjr.net:10.0.0.1"
   valid_volumes:
     - /home/jimmy/forge-swift
     - /var/run/docker.sock
