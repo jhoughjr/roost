@@ -56,7 +56,7 @@ PULSE = roostlib.rc("ROOST_PULSE_URL")
 # `prune` stays console-less on purpose: its du sweep over every repo can run
 # minutes and the console is a bad place to sit through that — use a shell.
 PASSTHROUGH = ["apps", "ps", "logs", "restart", "config", "status",
-               "fleet", "stats", "doctor", "backup", "new", "route", "kick",
+               "fleet", "stats", "doctor", "new", "route", "kick",
                "tapo"]
 INTERNAL = ["playbook", "start", "todo", "help", "clear", "quit",
             "monitor", "docs"]
@@ -75,7 +75,6 @@ CMD_DESC = {
     "fleet": "refresh the fleet board json",
     "stats": "run board-stat collectors",
     "doctor": "diagnose the setup",
-    "backup": "pull pi data to ~/Backups/roost",
     "new": "scaffold and deploy a new app",
     "route": "publish a tunnel route",
     "kick": "run the status runner's deploy now",
@@ -119,7 +118,6 @@ HELP = [
     ("", "  fleet                    refresh the fleet board json"),
     ("", "  stats                    run configured board-stat collectors"),
     ("", "  doctor                   diagnose the setup"),
-    ("", "  backup                   pull pi data to ~/Backups/roost"),
     ("", "  new <name> [--static|--node|--swift]    nothing → live app"),
     ("", "  route <subdomain>        publish a tunnel route"),
     ("", ""),

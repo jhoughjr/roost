@@ -7,7 +7,6 @@
 #   roost stats                                  run configured board-stat collectors
 #   roost tapo [--json|--watch|--discover]       read Tapo smart plugs (wall watts)
 #   roost ha-scoop [--days N|--json|--entities]  copy HA hourly power stats into pulse
-#   roost backup                                 pull pi data to ~/Backups/roost
 #   roost status ["message"]                     push status site (fleet+history+ledger)
 #   roost kick                                   run the status runner's hourly deploy now
 #   roost rollout [--kick]                       pull roost+statusgen on every writer machine
@@ -60,7 +59,6 @@ case "$cmd" in
     # test_detail re-applies the tile links onto it each push.
     python3 "$SGEN/bin/collect/test_detail.py" || echo "note: test-detail failed (non-fatal)"
     ;;
-  backup) exec "$BIN/backup-roost.sh" "$@" ;;
   prune)  exec "$BIN/roost-prune.py" "$@" ;;
   status) exec "$BIN/status.sh" "$@" ;;
   rollout) exec "$BIN/rollout.sh" "$@" ;;
@@ -149,7 +147,7 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,21p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,20p' "$0" | sed 's/^# \{0,1\}//'
     echo
     echo "  anything else dispatches to roost-<cmd> (PATH, then \$ROOST_STATUSGEN/bin)"
     ;;

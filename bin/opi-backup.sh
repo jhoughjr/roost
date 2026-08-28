@@ -23,8 +23,8 @@
 #
 # Restore: see docs/opi-backup-restore.md.
 #
-# This supersedes bin/backup-roost.sh. That script tars the vault and watts
-# storage to a Mac, and /var/lib/dokku holds both of those paths.
+# This replaced bin/backup-roost.sh, which is retired. That script tarred the
+# vault and watts storage to a Mac, and /var/lib/dokku holds both of those paths.
 set -euo pipefail
 
 MINI="jimmyhoughjr@jimmys-mac-mini.local"
