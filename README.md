@@ -7,6 +7,11 @@ Debian/Ubuntu machine), Dokku, a Cloudflare tunnel, and a toolbelt of
 scripts — serving any number of apps at `<name>.yourdomain`, deployed by
 `git push`, behind CGNAT with no public IP and no port forwarding.
 
+Roost also runs the box after the apps are up: **status boards** that publish
+what the fleet is doing, **fleet observability** through pulse, **backups and
+restore** for the whole stack, and **disk reclaim**. A roost is where things
+come home to rest, so keeping them safe is part of the job.
+
 ```
 Internet ─▶ Cloudflare ─▶ tunnel (dials OUT) ─▶ nginx :80 ─▶ Dokku app containers
 ```
@@ -48,7 +53,7 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | Prerequisites → first deploy: hardware, accounts, installs, tunnel |
 | [docs/tutorial.md](docs/tutorial.md) | Guided tour: deploy an app, board it, operate it — and which of the three repos to touch |
-| [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, disk reclaim, and every gotcha learned the hard way |
+| [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, fleet observability, backups and restore, disk reclaim, and every gotcha learned the hard way |
 | [homeauto](https://github.com/jhoughjr/homeauto) | Smart plugs, bulbs and Home Assistant: wiring, credential locations, rebuild-from-nothing plan (separate repo) |
 | [docs/status-events.md](docs/status-events.md) | Design sketch (future): push-based CI → central ingest → boards + history |
 | [bin/roost](bin/roost) | The dispatcher — every command above |
@@ -78,6 +83,7 @@ What this pattern runs in production, on one 8-core / 16 GB Orange Pi:
 - [vault](https://vault.jimmyhoughjr.net) — Apple/Google sign-in + per-app user storage (Swift/Hummingbird 2)
 - [head2head](https://head2head.jimmyhoughjr.net) — measured implementation shootouts (Node vs Swift, bout 1)
 - [status](https://status.jimmyhoughjr.net) — [statusgen](https://github.com/jhoughjr/statusgen) boards with git-generated history
+- [pulse](https://pulse.jimmyhoughjr.net) — live fleet dashboard and system map, and the Backups card
 - [docs](https://docs.jimmyhoughjr.net) — this repo's docs plus living usage reports
 - a blog, and a `hello` created by `new-app.sh` as its living test
 
