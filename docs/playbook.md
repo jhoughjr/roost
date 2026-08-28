@@ -530,6 +530,25 @@ or an unreachable host. A reading that has itself gone stale gets its own amber
 chip, because a reporter that stopped is a failure that would otherwise look
 like silence. Install it on a machine that reaches both hosts.
 
+Every run writes `meta/manifest.json` describing each artifact it produced: the
+source, the kind, and how it goes back. A tar names the path it untars to and
+whether that needs root, a `vol-` tar names its docker volume, and a `.sql` dump
+names the container it is piped into. The restore path reads the manifest rather
+than a human remembering the mapping, and because the producer writes it, it
+cannot drift from what the snapshot actually holds.
+
+`roost backup --snapshots REPO`, `--ls`, and `--extract` browse a snapshot and
+pull a path out to a new local directory, which must not already exist.
+`--restore` puts a path back on the service host, and it reports what it would
+write unless `--confirm` repeats the path exactly. It refuses entirely for
+`opi-critical`, whose snapshots hold the staging directory that every run wipes:
+extract the tar and follow the order below instead.
+
+Retention and verification run after the snapshots are stored, so a failure
+there records a warning and lets the run finish. Another machine reading the
+repository holds a lock, and restic cannot tell that a lock on a different host
+is dead, so it waits it out. Read-only commands pass `--no-lock` for that reason.
+
 The earlier `roost backup` (bin/backup-roost.sh) is retired. It pulled the
 vault and watts storage mounts to a Mac, and `/var/lib/dokku` already holds
 both. It also ran as a launchd agent that reached the opi over the LAN, so the

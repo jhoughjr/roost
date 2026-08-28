@@ -141,3 +141,11 @@ ROOST_STATUS_SITE=$HOME/status-site
 #ROOST_BACKUP_PASSWORD_FILE=~/.config/opi-backup/restic-password
 #ROOST_BACKUP_RESTIC=~/bin/restic
 #ROOST_BACKUP_SCRIPT=~/bin/opi-backup.sh
+# The same secret as ROOST_BACKUP_PASSWORD_FILE, under the name the SERVICE host
+# uses. An in-place restore runs there, not on the machine holding the drive.
+#ROOST_BACKUP_SERVICE_PASSWORD_FILE=~/.config/opi-backup/password
+# The staging directory the backup writes through. A snapshot of it cannot be
+# restored in place, because the next run wipes the directory.
+#ROOST_BACKUP_STAGING=/mnt/nvme/backup-staging
+# The repository directory as the SERVICE host addresses it, for in-place restores.
+#ROOST_BACKUP_REPO_URL=sftp:jimmyhoughjr@jimmys-mac-mini.local:/Users/jimmyhoughjr/backupdrive/restic
