@@ -113,6 +113,13 @@ ip addr > "${STAGE}/meta/ip-addr.txt"
 lsblk -f > "${STAGE}/meta/lsblk.txt"
 uname -a > "${STAGE}/meta/uname.txt"
 
+# An interrupted run leaves a lock behind, and the next run then blocks on it.
+# `unlock` removes only stale locks, so a genuinely concurrent run keeps its own.
+# A stale lock stopped `restic check` on 2026-08-28, and it would have stopped a backup.
+for repo in "${REPO_CRIT}" "${REPO_BULK}"; do
+    run_restic -r "${repo}" unlock || true
+done
+
 # The staging directory now holds every critical tree, and each one is small and hard to rebuild.
 echo "=== backup: critical ==="
 run_restic -r "${REPO_CRIT}" backup --tag critical \

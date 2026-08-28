@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """roost ui — a full-screen terminal for the roost platform.
 
-A Claude-Code-style interface in four tabs:
+A Claude-Code-style interface in five tabs:
   1 console   a prompt + transcript; platform commands stream through `roost`
   2 monitor   live fleet: pi host, app containers, node watts (via pulse)
   3 config    ~/.roostrc, derived settings, per-app config viewer
   4 docs      playbook / getting-started / TODO in a section-aware pager
+  5 backups   the backup service: schedule, last run, repositories; r/b/c act
 
-shift+tab cycles tabs from anywhere; on tabs 2-4 the digits 1-4 jump
+shift+tab cycles tabs from anywhere; on tabs 2-5 the digits 1-5 jump
 straight to a tab and q returns to the console. Stdlib only.
 
 Type `/` in the console to open the command menu; commands also work bare
@@ -56,7 +57,7 @@ PULSE = roostlib.rc("ROOST_PULSE_URL")
 # `prune` stays console-less on purpose: its du sweep over every repo can run
 # minutes and the console is a bad place to sit through that — use a shell.
 PASSTHROUGH = ["apps", "ps", "logs", "restart", "config", "status",
-               "fleet", "stats", "doctor", "new", "route", "kick",
+               "fleet", "stats", "doctor", "backup", "new", "route", "kick",
                "tapo"]
 INTERNAL = ["playbook", "start", "todo", "help", "clear", "quit",
             "monitor", "docs"]
@@ -75,6 +76,7 @@ CMD_DESC = {
     "fleet": "refresh the fleet board json",
     "stats": "run board-stat collectors",
     "doctor": "diagnose the setup",
+    "backup": "backup service state (schedule, runs, repos)",
     "new": "scaffold and deploy a new app",
     "route": "publish a tunnel route",
     "kick": "run the status runner's deploy now",
@@ -89,7 +91,7 @@ CMD_DESC = {
     "docs": "jump to the docs tab",
 }
 
-TABS = ["console", "monitor", "config", "docs"]
+TABS = ["console", "monitor", "config", "docs", "backups"]
 SECRET_HINTS = ("KEY", "TOKEN", "SECRET", "PASS", "PWD")
 
 MENU_ROWS = 8                                    # most slash rows we ever show
@@ -118,6 +120,7 @@ HELP = [
     ("", "  fleet                    refresh the fleet board json"),
     ("", "  stats                    run configured board-stat collectors"),
     ("", "  doctor                   diagnose the setup"),
+    ("", "  backup                   backup service state (tab 5 manages it)"),
     ("", "  new <name> [--static|--node|--swift]    nothing → live app"),
     ("", "  route <subdomain>        publish a tunnel route"),
     ("", ""),
@@ -223,6 +226,20 @@ def load_attr(frac):
     return "y" if frac >= 0.5 else "g"
 
 
+TONE_ATTR = {"go": "g", "warn": "y", "bad": "e", "unknown": "d"}
+
+
+def size_h(n):
+    """Bytes as one short human figure."""
+    if n is None:
+        return "?"
+    v = float(n)
+    for unit in ("B", "K", "M", "G", "T"):
+        if v < 1024 or unit == "T":
+            return "%.1f%s" % (v, unit)
+        v /= 1024
+
+
 def human_age(s):
     s = int(s)
     if s < 90:
@@ -312,6 +329,72 @@ class Stats:
 
     def refresh(self):
         self.ev.set()
+
+    def age(self):
+        return (time.monotonic() - self.t0) if self.t0 else None
+
+
+class Backups:
+    """Background reader for `backup-status.py`, and its two actions.
+
+    The reading crosses two hosts over ssh, so it takes seconds. The tab always
+    draws the last reading and says how old it is, and it never blocks a redraw.
+    Backups move once a night, so the poll is slow and `r` asks for one now.
+    """
+
+    def __init__(self, script):
+        self.script = script
+        self.data = None
+        self.err = ""
+        self.t0 = 0.0
+        self.fetching = False
+        self.busy = ""              # the action now running, for the header
+        self.note = ""              # what the last action said
+        self.ev = threading.Event()
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _call(self, args, timeout):
+        return subprocess.run([sys.executable, self.script] + args,
+                              capture_output=True, text=True, timeout=timeout)
+
+    def _loop(self):
+        while True:
+            self.fetching = True
+            try:
+                r = self._call(["--json"], 180)
+                if r.stdout.strip():
+                    self.data = json.loads(r.stdout)
+                    self.err = ""
+                else:
+                    self.err = (r.stderr or "no reading").strip()[:120]
+                self.t0 = time.monotonic()
+            except Exception as e:           # noqa: BLE001 - surface any failure
+                self.err = str(e)[:120]
+            self.fetching = False
+            self.ev.wait(300)
+            self.ev.clear()
+
+    def refresh(self):
+        self.ev.set()
+
+    def act(self, kind):
+        """Start `run` or `check` on its own thread. One action at a time."""
+        if self.busy:
+            return
+        threading.Thread(target=self._act, args=(kind,), daemon=True).start()
+
+    def _act(self, kind):
+        self.busy = kind
+        self.note = ""
+        try:
+            # A check walks every pack, and a backup runs for minutes.
+            r = self._call(["--" + kind], 1800)
+            said = (r.stdout or r.stderr).strip()
+            self.note = said or ("%s finished" % kind)
+        except Exception as e:               # noqa: BLE001
+            self.note = str(e)[:120]
+        self.busy = ""
+        self.refresh()
 
     def age(self):
         return (time.monotonic() - self.t0) if self.t0 else None
@@ -468,11 +551,13 @@ class UI:
         self.menu_sel = 0             # highlighted row of the slash menu
         self.runner = Runner()
         self.stats = Stats(PULSE)
+        self.backups = Backups(os.path.join(BIN, "backup-status.py"))
         self.apps = []
         self.spin = 0
         self.done = False
         self.mon_scroll = 0
         self.cfg_scroll = 0
+        self.bak_scroll = 0
         self.cfg_sel = 0
         self.cfg_app = ""
         self.cfg_lines = []           # fetched `roost config <app>` output
@@ -788,6 +873,63 @@ class UI:
         return L
 
     # ---- config tab ---------------------------------------------------
+    def backup_lines(self):
+        b = self.backups
+        d = b.data
+        L = []
+        if b.err and not d:
+            L.append(("e", "cannot read the backup state: %s" % b.err))
+            L.append(("d", "r retries"))
+            return L
+        if not d:
+            L.append(("d", "reading the backup state …"))
+            return L
+
+        upd = "reading …" if b.fetching else "read %s ago" % human_age(int(b.age() or 0))
+        busy = " · %s running …" % b.busy if b.busy else ""
+        L.append(("s", "%s · r refresh · b back up now · c check%s" % (upd, busy)))
+        L.append(("", ""))
+
+        svc = d.get("service", {})
+        L.append(("h", "service · %s" % svc.get("host", "?")))
+        if not svc.get("reachable"):
+            L.append(("e", "  unreachable, so the schedule and the last run are unknown"))
+        else:
+            sched = svc.get("scheduled")
+            L.append(("g" if sched else "e",
+                      "  schedule   %s" % ("installed" if sched else "MISSING")))
+            ok = svc.get("last_run_ok")
+            L.append(("g" if ok else "e",
+                      "  last run   %s" % ("finished" if ok else "DID NOT FINISH")))
+            L.append(("s", "  succeeded  %s" % (svc.get("last_success") or "never recorded")))
+        L.append(("", ""))
+
+        sto = d.get("storage", {})
+        L.append(("h", "storage · %s:%s" % (sto.get("host", "?"), sto.get("dir", "?"))))
+        if not sto.get("reachable"):
+            L.append(("e", "  unreachable, so the repositories cannot be read"))
+        elif not sto.get("mounted"):
+            L.append(("e", "  no repositories found, so the drive is probably not mounted"))
+        else:
+            for r in sto.get("repos", []):
+                if r.get("error"):
+                    L.append(("y", "  %-14s %s" % (r.get("name", "?"), r["error"])))
+                    continue
+                n = r.get("snapshots") or 0
+                hours = r.get("age_hours")
+                seen = human_age(int(hours * 3600)) + " ago" if hours is not None else "unknown"
+                L.append((TONE_ATTR.get(r.get("tone"), "d"),
+                          "  %-14s %3d snapshot%s %8s  %s"
+                          % (r.get("name", "?"), n, "s" if n != 1 else " ",
+                             size_h(r.get("size_bytes")), seen)))
+
+        if b.note:
+            L.append(("", ""))
+            L.append(("h", "last action"))
+            for line in b.note.splitlines()[:8]:
+                L.append(("s", "  " + line))
+        return L
+
     def config_lines(self):
         L = []
         rc_path = os.path.expanduser("~/.roostrc")
@@ -1010,7 +1152,7 @@ class UI:
         if self.tab == 1:
             self.mon_scroll = self.draw_list_tab(self.monitor_lines(),
                                                  self.mon_scroll)
-            hint = "r refresh · up/down scroll · 1-4 tabs · q console"
+            hint = "r refresh · up/down scroll · 1-5 tabs · q console"
         elif self.tab == 2:
             self.cfg_scroll = self.draw_list_tab(self.config_lines(),
                                                  self.cfg_scroll)
@@ -1019,7 +1161,7 @@ class UI:
         elif self.tab == 3:
             if self.docview:
                 hint = self.docview.draw(scr, 2, max(1, self.h - 5), self.w)
-                hint += " · 1-4 tabs"
+                hint += " · 1-5 tabs"
             else:
                 put(scr, 2, 1, "docs", attr("h"))
                 for i, (name, _, desc) in enumerate(DOCS):
@@ -1027,17 +1169,23 @@ class UI:
                     put(scr, 4 + i, 2, f"{'▸' if sel else ' '} {name:<16}",
                         attr("p") | curses.A_REVERSE if sel else attr("m"))
                     put(scr, 4 + i, 21, desc, attr("s"))
-                hint = "up/down select · enter open · 1-4 tabs · q console"
+                hint = "up/down select · enter open · 1-5 tabs · q console"
+        elif self.tab == 4:
+            self.bak_scroll = self.draw_list_tab(self.backup_lines(), self.bak_scroll)
+            hint = ("r refresh · b back up now · c check"
+                    " · up/down scroll · 1-5 tabs · q console")
         put(scr, self.h - 1, 1, hint, attr("s"))
         scr.refresh()
 
     # ---- key handling ---------------------------------------------------
     def handle_tabbed(self, ch):
         """Keys on the monitor / config / docs tabs."""
-        if ch in ("1", "2", "3", "4"):
+        if ch in ("1", "2", "3", "4", "5"):
             self.tab = int(ch) - 1
             if self.tab == 1:
                 self.stats.refresh()
+            elif self.tab == 4:
+                self.backups.refresh()
             return
         if self.tab == 3 and self.docview:
             if self.docview.handle(ch, max(1, self.h - 5)) == "close":
@@ -1088,6 +1236,21 @@ class UI:
                 self.doc_sel = min(len(DOCS) - 1, self.doc_sel + 1)
             elif ch in ("\n", "\r", curses.KEY_ENTER):
                 self.open_doc_by_index(self.doc_sel)
+        elif self.tab == 4:
+            if ch == "r":
+                self.backups.refresh()
+            elif ch == "b":
+                self.backups.act("run")
+            elif ch == "c":
+                self.backups.act("check")
+            elif ch in (curses.KEY_UP, "k"):
+                self.bak_scroll += 1
+            elif ch in (curses.KEY_DOWN, "j"):
+                self.bak_scroll = max(0, self.bak_scroll - 1)
+            elif ch == curses.KEY_PPAGE:
+                self.bak_scroll += self.page()
+            elif ch == curses.KEY_NPAGE:
+                self.bak_scroll = max(0, self.bak_scroll - self.page())
 
     def handle(self, ch):
         # Handle mouse events at the top, before anything else
