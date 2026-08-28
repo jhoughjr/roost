@@ -133,7 +133,14 @@ class StatusPublishFixture(unittest.TestCase):
         self.write_exec("fleet-board.py", script)
 
     def run_status(self, msg="hello", extra_env=None):
+        # ROOST_LOOPBACK stops the Local Network Privacy hop in status.sh.
+        # The hop re-execs the script through `ssh localhost`, and the new login shell
+        # drops every variable below and then reads the real ~/.roostrc.
+        # The run then works on the operator's own status-site instead of this fixture.
+        # A host where `ssh localhost` succeeds shows the failure, and a host where it
+        # fails does not, so the suite passes on the opi and fails on the mini.
         env = {"HOME": self.home,
+               "ROOST_LOOPBACK": "1",
                "ROOST_STATUS_SITE": self.site,
                "ROOST_STATUSGEN": self.sgen,
                "ROOST_DOCS": os.path.join(self.tmp, "no-docs")}
