@@ -18,6 +18,7 @@ Config, through ~/.roostrc:
   ROOST_BACKUP_REPO_HOST      ssh target that holds the repositories (default ROOST_STATUS_RUNNER)
   ROOST_BACKUP_REPO_DIR       repository directory on that host (default ~/backupdrive/restic)
   ROOST_BACKUP_PASSWORD_FILE  restic password file on that host (default ~/.config/opi-backup/restic-password)
+  ROOST_BACKUP_SERVICE_PASSWORD_FILE  the same secret on the service host (default ~/.config/opi-backup/password)
   ROOST_BACKUP_RESTIC         restic binary on that host (default ~/bin/restic)
   ROOST_BACKUP_SCRIPT         backup script on the service host (default ~/bin/opi-backup.sh)
 
@@ -27,6 +28,8 @@ import argparse
 import datetime
 import json
 import os
+import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -44,8 +47,19 @@ DEFAULTS = {
     "ROOST_BACKUP_SERVICE_HOST": "jimmy@opi.local",
     "ROOST_BACKUP_REPO_DIR": "~/backupdrive/restic",
     "ROOST_BACKUP_PASSWORD_FILE": "~/.config/opi-backup/restic-password",
+    # The service host keeps its own copy under its own name, which is the one
+    # opi-backup.sh reads. An in-place restore runs there, so it needs this and
+    # not the repository host's path.
+    "ROOST_BACKUP_SERVICE_PASSWORD_FILE": "~/.config/opi-backup/password",
     "ROOST_BACKUP_RESTIC": "~/bin/restic",
     "ROOST_BACKUP_SCRIPT": "~/bin/opi-backup.sh",
+    # The staging directory the backup writes through. A snapshot of it restores
+    # nothing useful in place, because the next run wipes the directory.
+    "ROOST_BACKUP_STAGING": "/mnt/nvme/backup-staging",
+    # The repository directory as the SERVICE host addresses it. An in-place
+    # restore runs there, not on the machine holding the drive.
+    "ROOST_BACKUP_REPO_URL": ("sftp:jimmyhoughjr@jimmys-mac-mini.local:"
+                              "/Users/jimmyhoughjr/backupdrive/restic"),
 }
 
 
@@ -137,10 +151,11 @@ def service_state():
     """Whether the schedule exists, and how the last run ended."""
     host = cfg("ROOST_BACKUP_SERVICE_HOST")
     state = {"host": host, "reachable": False, "scheduled": None,
-             "last_success": None, "last_run_ok": None, "log_tail": []}
+             "last_success": None, "last_run_ok": None, "log_tail": [], "warnings": []}
     rc, out, _ = run(host, "cat ~/.local/state/opi-backup/last-success 2>/dev/null; "
                            "echo '---'; crontab -l 2>/dev/null | grep -c opi-backup; "
-                           "echo '---'; tail -6 ~/.local/state/opi-backup/last-run.log 2>/dev/null")
+                           "echo '---'; tail -6 ~/.local/state/opi-backup/last-run.log 2>/dev/null; "
+                           "echo '---'; cat ~/.local/state/opi-backup/last-warnings 2>/dev/null")
     if rc != 0:
         return state
     state["reachable"] = True
@@ -149,6 +164,11 @@ def service_state():
         state["last_success"] = parts[0].strip() or None
         state["scheduled"] = parts[1].strip() not in ("", "0")
         state["log_tail"] = [ln for ln in parts[2].strip().splitlines() if ln.strip()]
+    if len(parts) >= 4:
+        # Retention or verification did not run. The snapshots are stored, so this
+        # is a warning and not a failure, but a repository that never prunes and
+        # never verifies is a real problem.
+        state["warnings"] = [ln for ln in parts[3].strip().splitlines() if ln.strip()]
     # The script writes this line last, so its absence means the run died partway.
     state["last_run_ok"] = any("opi-backup finished" in ln for ln in state["log_tail"])
     return state
@@ -180,7 +200,7 @@ def repo_state():
         repo = "%s/%s" % (rdir, name)
         entry = {"name": name, "snapshots": None, "latest": None,
                  "age_hours": None, "tone": "unknown", "size_bytes": None, "error": None}
-        cmd = ("RESTIC_PASSWORD_FILE=%s %s -r %s snapshots --json 2>/dev/null"
+        cmd = ("RESTIC_PASSWORD_FILE=%s %s -r %s snapshots --no-lock --json 2>/dev/null"
                % (pwfile, restic, repo))
         rc, out, err = run(host, cmd, timeout=90)
         if rc != 0 or not out.strip():
@@ -200,7 +220,7 @@ def repo_state():
             hours = age_hours(parse_time(entry["latest"] or ""))
             entry["age_hours"] = round(hours, 1) if hours is not None else None
             entry["tone"] = tone_for(hours)
-        cmd = ("RESTIC_PASSWORD_FILE=%s %s -r %s stats --mode raw-data --json 2>/dev/null"
+        cmd = ("RESTIC_PASSWORD_FILE=%s %s -r %s stats --no-lock --mode raw-data --json 2>/dev/null"
                % (pwfile, restic, repo))
         rc, out, _ = run(host, cmd, timeout=90)
         if rc == 0 and out.strip():
@@ -253,6 +273,8 @@ def render(state):
         out.append("  %s last run %s" % ("✓" if svc["last_run_ok"] else "✗",
                                          "finished" if svc["last_run_ok"] else "DID NOT FINISH"))
         out.append("  · last success %s" % (svc["last_success"] or "never recorded"))
+        for w in svc.get("warnings", []):
+            out.append("  ! %s" % w)
 
     out.append("")
     out.append("storage  %s:%s" % (sto["host"], sto["dir"]))
@@ -281,11 +303,165 @@ def worst_tone(state):
         return "bad"
     if sto["reachable"] and not sto["mounted"]:
         return "bad"
+    if svc["reachable"] and svc.get("warnings"):
+        return "warn"
     tones = [r["tone"] for r in sto["repos"]] or ["unknown"]
     for level in ("bad", "warn", "unknown", "go"):
         if level in tones:
             return level
     return "unknown"
+
+
+def repo_path(name):
+    """The repository as the machine holding the drive addresses it."""
+    return "%s/%s" % (cfg("ROOST_BACKUP_REPO_DIR"), name)
+
+
+def restic_on_repo_host(name, args, timeout=120):
+    """Run restic against `name` on the host that holds the drive."""
+    cmd = ("RESTIC_PASSWORD_FILE=%s %s -r %s %s"
+           % (cfg("ROOST_BACKUP_PASSWORD_FILE"), cfg("ROOST_BACKUP_RESTIC"),
+              repo_path(name), args))
+    return run(repo_host(), cmd, timeout=timeout)
+
+
+def snapshots(name):
+    """Every snapshot in one repository, newest last."""
+    rc, out, err = restic_on_repo_host(name, "snapshots --no-lock --json 2>/dev/null")
+    if rc != 0 or not out.strip():
+        return None, (err or "cannot read repository").strip()[:200]
+    try:
+        snaps = json.loads(out)
+    except ValueError:
+        return None, "unreadable snapshot list"
+    return [{"id": s.get("short_id"), "time": s.get("time"),
+             "tags": s.get("tags") or [], "paths": s.get("paths") or [],
+             "size": (s.get("summary") or {}).get("total_bytes_processed")}
+            for s in snaps], None
+
+
+def list_tree(name, snap, path):
+    """One level of a snapshot's tree. `path` empty means the roots."""
+    arg = "ls --no-lock --json %s" % snap
+    if path:
+        arg += " %s" % shlex.quote(path)
+    rc, out, err = restic_on_repo_host(name, arg + " 2>/dev/null", timeout=180)
+    if rc != 0:
+        return None, (err or "cannot list the snapshot").strip()[:200]
+    entries, want = [], (path.rstrip("/") if path else "")
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            j = json.loads(line)
+        except ValueError:
+            continue
+        if j.get("struct_type") != "node" and "path" not in j:
+            continue
+        p = j.get("path") or ""
+        # `restic ls` walks the whole subtree, and the browser wants one level.
+        parent = p.rsplit("/", 1)[0] if "/" in p else ""
+        if parent != want:
+            continue
+        entries.append({"path": p, "name": p.rsplit("/", 1)[-1],
+                        "type": j.get("type"), "size": j.get("size")})
+    entries.sort(key=lambda e: (e["type"] != "dir", e["name"]))
+    return entries, None
+
+
+def in_place_ok(name):
+    """Whether restoring this repository in place means anything.
+
+    The critical repository holds the staging directory, and the next backup run
+    wipes that directory. Restoring it there would report success and achieve
+    nothing, so the answer is no, and the caller is sent to the runbook.
+    """
+    staging = cfg("ROOST_BACKUP_STAGING").rstrip("/")
+    snaps, err = snapshots(name)
+    if err or not snaps:
+        return False, "cannot read the repository"
+    paths = snaps[-1]["paths"]
+    if all(p.rstrip("/") == staging or p.startswith(staging + "/") for p in paths):
+        return False, ("this repository holds %s, which every run wipes. "
+                       "Extract the tar and follow docs/opi-backup-restore.md." % staging)
+    return True, ""
+
+
+def extract(name, snap, path, target):
+    """Pull one path out of a snapshot onto THIS machine, into a new directory.
+
+    The target must not exist. Nothing here may overwrite anything, and that is
+    what separates this from the in-place restore below.
+    """
+    target = os.path.abspath(os.path.expanduser(target))
+    if os.path.exists(target):
+        return 1, "refusing to extract: %s already exists" % target
+    host = repo_host()
+
+    def restic_restore(dest):
+        return ("RESTIC_PASSWORD_FILE=%s %s -r %s restore %s --include %s --target %s --verify"
+                % (cfg("ROOST_BACKUP_PASSWORD_FILE"), cfg("ROOST_BACKUP_RESTIC"),
+                   repo_path(name), shlex.quote(snap), shlex.quote(path), dest))
+
+    os.makedirs(target)
+    try:
+        if is_local(host):
+            rc, out, err = run(host, restic_restore(shlex.quote(target)), timeout=3600)
+            if rc != 0:
+                raise RuntimeError((err or out).strip()[:400])
+            return 0, "extracted %s into %s" % (path, target)
+
+        # The repository is on another machine. restic writes there, and the
+        # result streams back as a tar. restic reports progress on stdout, so
+        # that goes to stderr here: anything else corrupts the tar stream.
+        remote = ('set -e; T=$(mktemp -d /tmp/roost-extract.XXXXXX); '
+                  + restic_restore('"$T"') + ' >&2; '
+                  'tar -cf - -C "$T" . ; rm -rf "$T"')
+        argv = ["ssh", "-o", "BatchMode=yes", host, remote]
+        tarball = os.path.join(target, ".incoming.tar")
+        with open(tarball, "wb") as fh:
+            p = subprocess.run(argv, stdout=fh, stderr=subprocess.PIPE, timeout=3600)
+        if p.returncode != 0:
+            raise RuntimeError(p.stderr.decode("utf-8", "replace").strip()[:400])
+        rc2, out2, err2 = run("", "tar -xf %s -C %s" % (shlex.quote(tarball), shlex.quote(target)))
+        if rc2 != 0:
+            raise RuntimeError((err2 or out2).strip()[:400])
+        os.remove(tarball)
+        return 0, "extracted %s into %s" % (path, target)
+    except Exception as exc:                     # noqa: BLE001 - report any failure
+        # A half-written target would block the retry, because we refuse to
+        # extract onto anything that already exists.
+        shutil.rmtree(target, ignore_errors=True)
+        return 1, "extract failed: %s" % exc
+
+
+def restore_in_place(name, snap, path, confirm=None):
+    """Restore a path back over its original location on the service host.
+
+    This is the one action here that cannot be undone, so it runs as a dry run
+    unless `confirm` repeats the path exactly. `--delete` is never passed: a
+    restore may put files back, and it may not remove any.
+    """
+    ok, why = in_place_ok(name)
+    if not ok:
+        return 1, "in-place restore is not available for %s: %s" % (name, why)
+    dry = confirm != path
+    # restic refuses --dry-run together with --verify, so the preview lists what
+    # it would write and the real run reads the result back to check it.
+    mode = "--dry-run --verbose" if dry else "--verify"
+    cmd = ("RESTIC_PASSWORD_FILE=%s %s -r %s/%s restore %s --include %s --target / %s"
+           % (cfg("ROOST_BACKUP_SERVICE_PASSWORD_FILE"), cfg("ROOST_BACKUP_RESTIC"),
+              cfg("ROOST_BACKUP_REPO_URL"), name, shlex.quote(snap),
+              shlex.quote(path), mode))
+    host = cfg("ROOST_BACKUP_SERVICE_HOST")
+    rc, out, err = run(host, cmd, timeout=7200)
+    said = (out or err).strip()
+    if dry:
+        head = ("DRY RUN on %s. Nothing was written.\n"
+                "To do it, repeat the path with --confirm.\n" % host)
+        return rc, head + said[-2000:]
+    return rc, ("restored %s onto %s\n" % (path, host)) + said[-2000:]
 
 
 def start_run():
@@ -331,7 +507,58 @@ def main():
     ap.add_argument("--json", action="store_true", help="emit the reading as JSON")
     ap.add_argument("--run", action="store_true", help="start a backup on the service host")
     ap.add_argument("--check", action="store_true", help="run restic check on every repository")
+    ap.add_argument("--snapshots", metavar="REPO", help="list the snapshots in one repository")
+    ap.add_argument("--ls", metavar="REPO", help="list one level of a snapshot's tree")
+    ap.add_argument("--extract", metavar="REPO", help="pull a path out of a snapshot to --to")
+    ap.add_argument("--restore", metavar="REPO", help="restore a path onto the service host")
+    ap.add_argument("--snapshot", default="latest", help="snapshot id (default: latest)")
+    ap.add_argument("--path", default="", help="path inside the snapshot")
+    ap.add_argument("--to", help="local directory for --extract; it must not exist")
+    ap.add_argument("--confirm", metavar="PATH",
+                    help="repeat --path exactly to perform an in-place restore. "
+                         "Without it, --restore only reports what it would write.")
     args = ap.parse_args()
+
+    if args.snapshots:
+        snaps, err = snapshots(args.snapshots)
+        if err:
+            print(err)
+            return 1
+        if args.json:
+            print(json.dumps(snaps, indent=2, sort_keys=True))
+        else:
+            for s_ in snaps:
+                print("%-10s %s  %-10s %s" % (s_["id"], (s_["time"] or "")[:19],
+                                              ",".join(s_["tags"]), " ".join(s_["paths"])))
+        return 0
+
+    if args.ls:
+        entries, err = list_tree(args.ls, args.snapshot, args.path)
+        if err:
+            print(err)
+            return 1
+        if args.json:
+            print(json.dumps(entries, indent=2, sort_keys=True))
+        else:
+            for e in entries:
+                print("%-4s %10s  %s" % (e["type"], human_size(e["size"]), e["path"]))
+        return 0
+
+    if args.extract:
+        if not args.path or not args.to:
+            print("--extract needs --path and --to")
+            return 2
+        rc, msg = extract(args.extract, args.snapshot, args.path, args.to)
+        print(msg)
+        return rc
+
+    if args.restore:
+        if not args.path:
+            print("--restore needs --path")
+            return 2
+        rc, msg = restore_in_place(args.restore, args.snapshot, args.path, args.confirm)
+        print(msg)
+        return rc
 
     if args.run:
         rc, msg = start_run()
