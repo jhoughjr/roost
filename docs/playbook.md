@@ -522,6 +522,14 @@ and it reports an unreachable host rather than staying quiet about it.
 repository. Tab 5 of `roost ui` draws the same reading and binds those two
 actions to `b` and `c`.
 
+`bin/backup-report.sh` pushes the same reading to pulse `/api/backups` every
+hour, and the dashboard draws a Backups card from it: one chip for the service
+and one per repository, green while a nightly run is on time, amber for one
+missed night, red for a missing schedule, an unfinished run, an unmounted drive,
+or an unreachable host. A reading that has itself gone stale gets its own amber
+chip, because a reporter that stopped is a failure that would otherwise look
+like silence. Install it on a machine that reaches both hosts.
+
 The earlier `roost backup` (bin/backup-roost.sh) is retired. It pulled the
 vault and watts storage mounts to a Mac, and `/var/lib/dokku` already holds
 both. It also ran as a launchd agent that reached the opi over the LAN, so the

@@ -62,6 +62,7 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 | [bin/roost-prune.py](bin/roost-prune.py) | Disk reclaim (dry-run default) |
 | [bin/opi-backup.sh](bin/opi-backup.sh) | Nightly disaster-recovery backup of the opi stack; runs on the opi, writes restic repositories to the drive on the mini |
 | [bin/backup-status.py](bin/backup-status.py) | Reads that service from any machine: the schedule and last run on the service host, the repositories on the storage host |
+| [bin/backup-report.sh](bin/backup-report.sh) | Pushes that reading to pulse `/api/backups` for the dashboard card; hourly launchd/systemd installer alongside |
 | [bin/roost-ui.py](bin/roost-ui.py) | `roost ui` — full-screen terminal in five tabs: console (prompt + streaming commands), monitor (live fleet via pulse), config, docs pager, backups (stdlib only) |
 
 Each script carries its own usage/config header — the headers are the
