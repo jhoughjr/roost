@@ -36,7 +36,7 @@ wraps everything — `roost help` prints the full list:
 - status site: `roost status`, `roost stats`, `roost fleet`, `roost kick`
 - day-2 Dokku ops: `roost apps`, `roost ps`, `roost logs`, `roost restart`,
   `roost config`
-- housekeeping: `roost backup`, `roost prune`
+- housekeeping: `roost prune`
 - `roost doctor` (diagnoses SSH, token, tunnel, and tooling problems —
   run it first when anything misbehaves) and `roost ui` (full-screen
   terminal: console, monitor, config, docs tabs)
@@ -507,11 +507,21 @@ obstruction sky-map, refreshing every 5 s.
 
 ## 7c. Backups
 
-`roost backup` (bin/backup-roost.sh) tars each persistent storage mount
-from inside a container (the only channel is dokku@) to
-`~/Backups/roost/<name>-<date>.tgz`, keeps 14 days. Runs nightly at 04:15
-via launchd. Every site repo also has a private GitHub remote — the pi is
-never the only copy of anything.
+`bin/opi-backup.sh` runs on the opi from cron at 03:30 and writes two restic
+repositories over SFTP to the drive on the mini. `opi-critical` holds the
+PostgreSQL dumps, `/var/lib/dokku`, `/etc`, the Home Assistant config, the
+docker volumes, and the host metadata. `opi-bulk` holds the home directory.
+Together they store about 3 GB, because the docker images and the build caches
+are most of the disk and they rebuild. `restic check` runs on every pass, and
+`docs/opi-backup-restore.md` carries the restore order.
+
+The earlier `roost backup` (bin/backup-roost.sh) is retired. It pulled the
+vault and watts storage mounts to a Mac, and `/var/lib/dokku` already holds
+both. It also ran as a launchd agent that reached the opi over the LAN, so the
+Local Network Privacy gate failed it on 10 of its last 14 nights.
+
+Every site repo also has a private GitHub remote, so the opi is never the only
+copy of anything.
 
 ## 7d. Reclaiming disk
 

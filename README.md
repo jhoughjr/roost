@@ -34,7 +34,6 @@ diagnoses the setup when anything misbehaves.
 | `roost rollout [--kick]` | ff-only pull roost + statusgen on every writer machine after a merge |
 | `roost apps` / `ps [app]` / `logs <app> [-n N]` / `restart <app>` / `config <app>` | day-2 Dokku reads over ssh. Config writes moved to `hatchery config set`, which keeps the declaration true; `--force` keeps the old direct write for emergencies |
 | `roost prune [project] [--yes] [--deep] [--caches]` | reclaim build artifacts (dry-run by default) |
-| `roost backup` | pull pi data to `~/Backups/roost` |
 | `roost doctor` | diagnose ssh, token, zone, and tooling |
 | `roost ui` | full-screen terminal: console, monitor, config, docs tabs |
 
@@ -59,7 +58,8 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 | [bin/node-report.sh](bin/node-report.sh) | Per-node telemetry (load/mem/disk/watts/battery/runner) → pulse `/api/nodes`, macOS + Linux; launchd/systemd installer alongside |
 | [bin/ci-live-report.sh](bin/ci-live-report.sh) | Live CI-run poller (runs on the CI Mac) → the ci-live app; launchd installer alongside |
 | [bin/gen-narrative.py](bin/gen-narrative.py) | Composes the board narrative from merged PRs when `roost status` gets no message |
-| [bin/roost-prune.py](bin/roost-prune.py) / [bin/backup-roost.sh](bin/backup-roost.sh) | Disk reclaim (dry-run default) / nightly storage-mount backups |
+| [bin/roost-prune.py](bin/roost-prune.py) | Disk reclaim (dry-run default) |
+| [bin/opi-backup.sh](bin/opi-backup.sh) | Nightly disaster-recovery backup of the opi stack; runs on the opi, writes restic repositories to the drive on the mini |
 | [bin/roost-ui.py](bin/roost-ui.py) | `roost ui` — full-screen terminal in four tabs: console (prompt + streaming commands), monitor (live fleet via pulse), config, docs pager (stdlib only) |
 
 Each script carries its own usage/config header — the headers are the
