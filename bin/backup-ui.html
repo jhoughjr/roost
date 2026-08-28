@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>roost backups</title>
+<style>
+  :root {
+    --paper: #F7F6F2; --card: #FFFFFF; --ink: #23211C;
+    --muted: #6F6B62; --accent: #B4551F; --line: #E3E0D8;
+    --go: #2f9e44; --warn: #96690f; --bad: #c92a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #1A1C1F; --card: #212428; --ink: #E8E6E1;
+      --muted: #9A968D; --accent: #E07A3F; --line: #33363B;
+      --go: #51cf66; --warn: #ffc078; --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 60rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+  header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem; }
+  header svg { width: 34px; height: 34px; color: var(--accent); flex: none; }
+  h1 { font-size: 1.3rem; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .note { color: var(--muted); font-size: 0.82rem; margin: 0 0 1.25rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 9px; margin-bottom: 1.1rem; overflow: hidden;
+  }
+  .card h2 {
+    font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); margin: 0; padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid var(--line); font-weight: 600;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 1rem 1.1rem; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.8rem;
+    padding: 0.35rem 0.6rem; border-radius: 5px; border: 1px solid var(--line);
+  }
+  .chip .dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--muted); flex: none; }
+  .chip .who { color: var(--muted); }
+  .chip.go { border-color: var(--go); } .chip.go .dot { background: var(--go); }
+  .chip.warn { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+  .chip.warn .dot { background: var(--warn); } .chip.warn .who { color: inherit; }
+  .chip.bad { border-color: var(--bad); color: var(--bad); font-weight: 600; }
+  .chip.bad .dot { background: var(--bad); } .chip.bad .who { color: inherit; }
+  .crumbs { padding: 0.75rem 1.1rem; border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+  .crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  .crumbs span.sep { color: var(--muted); margin: 0 0.4rem; }
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  ul.rows li {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.5rem 1.1rem; border-bottom: 1px solid var(--line); font-size: 0.88rem;
+  }
+  ul.rows li:last-child { border-bottom: 0; }
+  ul.rows li:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .name { flex: 1; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .name.dir { color: var(--accent); font-weight: 600; }
+  .size { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.8rem; }
+  button {
+    font: inherit; font-size: 0.78rem; padding: 0.2rem 0.55rem; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 5px;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button[disabled] { opacity: 0.35; cursor: not-allowed; }
+  .log {
+    white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem; padding: 1rem 1.1rem; color: var(--muted); max-height: 22rem; overflow: auto;
+  }
+  dialog {
+    border: 1px solid var(--line); border-radius: 9px; background: var(--card);
+    color: var(--ink); max-width: 34rem; width: 92%; padding: 1.2rem;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.45); }
+  dialog p { margin: 0 0 0.8rem; font-size: 0.88rem; }
+  dialog input {
+    width: 100%; font: inherit; font-size: 0.85rem; padding: 0.45rem 0.6rem;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--paper); color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  dialog .actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
+      <path d="M19 39 C5 34 2 18 9 7 C9.5 21 14 31 24 33 Z"/>
+      <path d="M22 33 C13 29 11 19 15 11 C16 21 19 27 27 29 Z"/>
+      <ellipse cx="29" cy="33" rx="13" ry="11"/>
+      <path d="M35 17 L45 25 L36 33 L26 25 Z"/>
+      <path fill-rule="evenodd" d="M37.3 18 a5.7 5.7 0 1 0 11.4 0 a5.7 5.7 0 1 0 -11.4 0 Z M43.2 16.8 a1.4 1.4 0 1 0 2.8 0 a1.4 1.4 0 1 0 -2.8 0 Z"/>
+      <circle cx="40.5" cy="11" r="2.9"/>
+      <circle cx="45" cy="11.8" r="2.4"/>
+      <path d="M48.2 15.8 L55 18.2 L48.2 20.8 Z"/>
+      <rect x="26.6" y="42" width="2.6" height="10" rx="1.3"/>
+      <rect x="32.8" y="42" width="2.6" height="10" rx="1.3"/>
+      <rect x="7" y="50.5" width="50" height="3" rx="1.5"/>
+    </svg>
+    <h1>roost backups</h1>
+  </header>
+  <p class="note" id="note">reading …</p>
+
+  <div class="card">
+    <h2>Service</h2>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <div class="card">
+    <h2 id="browse-title">Repositories</h2>
+    <div class="crumbs" id="crumbs"></div>
+    <ul class="rows" id="rows"></ul>
+  </div>
+
+  <div class="card" id="log-card" hidden>
+    <h2>Last action</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<dialog id="ask">
+  <p id="ask-text"></p>
+  <input id="ask-input" autocomplete="off" spellcheck="false">
+  <div class="actions">
+    <button id="ask-cancel">Cancel</button>
+    <button id="ask-ok">OK</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v == null ? "" : v)
+  .replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// The whole page is one of three views, exactly like the terminal tab:
+// repositories, then one repository's snapshots, then a snapshot's tree.
+let view = "repos", repo = "", snap = "", path = "", stack = [];
+let inplace = {};        // repo -> {ok, why}, so Restore is only offered where it works
+
+const size = (n) => {
+  if (n == null) return "";
+  let v = n;
+  for (const u of ["B", "KB", "MB", "GB", "TB"]) {
+    if (v < 1024 || u === "TB") return v.toFixed(1) + " " + u;
+    v /= 1024;
+  }
+};
+const ageTxt = (h) => (h == null ? "age unknown"
+  : h < 48 ? h.toFixed(1) + "h ago" : (h / 24).toFixed(1) + "d ago");
+
+async function api(p, opts) {
+  const r = await fetch(p, opts);
+  return r.json();
+}
+
+function ask(text, value) {
+  // A typed answer, not a click. The restore path depends on it.
+  return new Promise((resolve) => {
+    $("ask-text").innerHTML = text;
+    $("ask-input").value = value || "";
+    $("ask").showModal();
+    $("ask-input").focus();
+    $("ask-input").select();
+    const done = (v) => { $("ask").close(); resolve(v); };
+    $("ask-ok").onclick = () => done($("ask-input").value);
+    $("ask-cancel").onclick = () => done(null);
+    $("ask-input").onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); done($("ask-input").value); }
+    };
+  });
+}
+
+function say(msg) {
+  $("log-card").hidden = false;
+  $("log").textContent = msg;
+}
+
+async function loadState() {
+  const d = await api("/api/state");
+  const svc = d.service || {}, sto = d.storage || {};
+  const shortHost = (h) => String(h || "?").split("@").pop().replace(/\.local$/, "");
+  const chip = (cls, name, who, title) =>
+    `<span class="chip ${cls}"${title ? ` title="${esc(title)}"` : ""}><span class="dot"></span>`
+    + `<span>${esc(name)}</span> <span class="who">${esc(who)}</span></span>`;
+
+  const chips = [];
+  if (!svc.reachable) chips.push(chip("bad", shortHost(svc.host), "host unreachable", svc.host));
+  else if (svc.scheduled === false) chips.push(chip("bad", shortHost(svc.host), "no nightly schedule", svc.host));
+  else if (svc.last_run_ok === false) chips.push(chip("bad", shortHost(svc.host), "last run did not finish", svc.host));
+  else chips.push(chip("go", shortHost(svc.host), "nightly run scheduled and finishing", svc.host));
+
+  if (!sto.reachable) chips.push(chip("bad", shortHost(sto.host), "storage host unreachable", sto.host));
+  else if (!sto.mounted) chips.push(chip("bad", shortHost(sto.host), "backup drive not mounted", sto.host));
+  for (const w of svc.warnings || []) {
+    chips.push(chip("warn", "warning", w.replace(/sftp:[^ ]*\//, ""), w));
+  }
+  $("chips").innerHTML = chips.join("");
+
+  const when = svc.last_success ? String(svc.last_success).replace("T", " ").slice(0, 19) : "never recorded";
+  $("note").textContent =
+    `${shortHost(svc.host)} backs itself up every night to the drive on ${shortHost(sto.host)}. `
+    + `Last successful run ${when}. This page is served on your own machine, so nobody else can reach it.`;
+
+  if (view === "repos") renderRepos(sto.repos || []);
+}
+
+function renderRepos(repos) {
+  $("browse-title").textContent = "Repositories";
+  $("crumbs").innerHTML = '<span class="muted">pick a repository to browse its snapshots</span>';
+  $("rows").innerHTML = repos.map((r) => {
+    const n = r.snapshots == null ? "?" : r.snapshots;
+    const detail = r.error ? r.error
+      : `${n} snapshot${n === 1 ? "" : "s"} · newest ${ageTxt(r.age_hours)}`;
+    return `<li><span class="name dir" data-repo="${esc(r.name)}">${esc(r.name)}</span>`
+      + `<span class="size">${esc(detail)}</span>`
+      + `<span class="size">${esc(size(r.size_bytes))}</span></li>`;
+  }).join("");
+  for (const el of document.querySelectorAll("[data-repo]")) {
+    el.onclick = () => openRepo(el.dataset.repo);
+  }
+}
+
+async function openRepo(name) {
+  repo = name; view = "snaps";
+  $("browse-title").textContent = "Snapshots · " + name;
+  $("crumbs").innerHTML = '<a id="back-repos">repositories</a><span class="sep">/</span>' + esc(name);
+  $("back-repos").onclick = () => { view = "repos"; loadState(); };
+  $("rows").innerHTML = '<li class="muted">reading …</li>';
+  if (!(name in inplace)) inplace[name] = await api("/api/inplace?repo=" + encodeURIComponent(name));
+  const d = await api("/api/snapshots?repo=" + encodeURIComponent(name));
+  const rows = (d.rows || []).slice().reverse();      // newest first
+  $("rows").innerHTML = rows.map((r) =>
+    `<li><span class="name dir" data-snap="${esc(r.id)}">${esc(r.id)}</span>`
+    + `<span class="size">${esc((r.time || "").replace("T", " ").slice(0, 19))}</span>`
+    + `<span class="size">${esc((r.tags || []).join(","))}</span></li>`).join("")
+    || '<li class="muted">no snapshots</li>';
+  for (const el of document.querySelectorAll("[data-snap]")) {
+    el.onclick = () => openTree(el.dataset.snap, "", []);
+  }
+}
+
+async function openTree(id, at, newStack) {
+  snap = id; path = at; stack = newStack; view = "tree";
+  $("browse-title").textContent = "Files · " + repo + " · " + snap;
+  const up = stack.length
+    ? '<span class="sep">/</span><a id="up">up</a>' : "";
+  $("crumbs").innerHTML = '<a id="back-snaps">snapshots</a><span class="sep">/</span>'
+    + esc(path || "/") + up;
+  $("back-snaps").onclick = () => openRepo(repo);
+  if ($("up")) $("up").onclick = () => openTree(snap, stack[stack.length - 1], stack.slice(0, -1));
+  $("rows").innerHTML = '<li class="muted">reading …</li>';
+
+  const d = await api(`/api/ls?repo=${encodeURIComponent(repo)}`
+    + `&snap=${encodeURIComponent(snap)}&path=${encodeURIComponent(path)}`);
+  if (d.error) { $("rows").innerHTML = `<li class="muted">${esc(d.error)}</li>`; return; }
+  const canRestore = (inplace[repo] || {}).ok;
+  $("rows").innerHTML = (d.rows || []).map((e, i) => {
+    const isDir = e.type === "dir";
+    return `<li><span class="name${isDir ? " dir" : ""}" data-i="${i}">`
+      + `${esc(e.name)}${isDir ? "/" : ""}</span>`
+      + `<span class="size">${esc(isDir ? "" : size(e.size))}</span>`
+      + `<button data-x="${i}">Extract</button>`
+      + `<button class="danger" data-r="${i}"${canRestore ? "" : " disabled"}`
+      + ` title="${esc(canRestore ? "restore over the original location" : (inplace[repo] || {}).why || "")}">Restore</button>`
+      + `</li>`;
+  }).join("") || '<li class="muted">nothing here</li>';
+
+  const rows = d.rows || [];
+  for (const el of document.querySelectorAll("[data-i]")) {
+    const e = rows[+el.dataset.i];
+    if (e.type === "dir") el.onclick = () => openTree(snap, e.path, stack.concat([path]));
+  }
+  for (const el of document.querySelectorAll("[data-x]")) {
+    el.onclick = () => doExtract(rows[+el.dataset.x]);
+  }
+  for (const el of document.querySelectorAll("[data-r]")) {
+    el.onclick = () => doRestore(rows[+el.dataset.r]);
+  }
+}
+
+async function doExtract(e) {
+  const to = await ask(
+    `Extract <code>${esc(e.path)}</code> to a directory. It must not already exist.`,
+    "/tmp/roost-restore/" + e.name);
+  if (!to) return;
+  say("extracting " + e.path + " …");
+  const r = await api("/api/extract", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ repo, snap, path: e.path, to }),
+  });
+  say(r.message);
+}
+
+async function doRestore(e) {
+  // Typing the path is the gate, and the server enforces it independently:
+  // anything that is not an exact match comes back as a dry run.
+  const typed = await ask(
+    `<b>Restore in place.</b> This writes <code>${esc(e.path)}</code> back over its `
+    + `original location. Type the path exactly to do it, or leave it blank to `
+    + `see what it would write.`, "");
+  if (typed === null) return;
+  say((typed ? "restoring " : "dry run for ") + e.path + " …");
+  const r = await api("/api/restore", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ repo, snap, path: e.path, confirm: typed }),
+  });
+  say(r.message);
+  loadState();
+}
+
+loadState();
+setInterval(() => { if (view === "repos") loadState(); }, 60000);
+</script>
+</body>
+</html>

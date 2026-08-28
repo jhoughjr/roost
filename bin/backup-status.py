@@ -22,7 +22,7 @@ Config, through ~/.roostrc:
   ROOST_BACKUP_RESTIC         restic binary on that host (default ~/bin/restic)
   ROOST_BACKUP_SCRIPT         backup script on the service host (default ~/bin/opi-backup.sh)
 
-Usage: backup-status.py [--json] [--run] [--check]
+Usage: backup-status.py [--json] [--run] [--check] [--serve]
 """
 import argparse
 import datetime
@@ -464,6 +464,109 @@ def restore_in_place(name, snap, path, confirm=None):
     return rc, ("restored %s onto %s\n" % (path, host)) + said[-2000:]
 
 
+LOCAL_BINDS = ("127.0.0.1", "localhost", "::1")
+
+
+def serve(bind, port, token):
+    """Present the backup service as a local web page, the way hatchery serve does.
+
+    The server is started by a person at a shell and binds the loopback address,
+    so there is nobody else to authenticate. That is the whole reason this can
+    offer restore at all: the page is not reachable from the network.
+
+    Binding anywhere else demands a token, because the same page then reaches the
+    repositories from another machine.
+    """
+    import http.server
+    import urllib.parse
+
+    if bind not in LOCAL_BINDS and not token:
+        return 2, ("refusing to bind %s without --token. The page can extract and "
+                   "restore, so off-loopback it needs a secret." % bind)
+
+    page = os.path.join(BIN, "backup-ui.html")
+    if not os.path.exists(page):
+        return 2, "missing %s" % page
+
+    def body(handler):
+        length = int(handler.headers.get("content-length") or 0)
+        try:
+            return json.loads(handler.rfile.read(length) or b"{}")
+        except ValueError:
+            return {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        # The default logger writes a line per request to stderr, which buries
+        # the one line a person started this to read.
+        def log_message(self, fmt, *args):
+            pass
+
+        def allowed(self):
+            return not token or self.headers.get("x-roost-token") == token
+
+        def send(self, code, payload, kind="application/json"):
+            data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("content-type", kind)
+            self.send_header("cache-control", "no-store")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):                                    # noqa: N802
+            url = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(url.query)
+            one = lambda k, d="": (q.get(k) or [d])[0]       # noqa: E731
+            if url.path == "/":
+                with open(page, "rb") as fh:
+                    return self.send(200, fh.read(), "text/html; charset=utf-8")
+            if not self.allowed():
+                return self.send(401, {"error": "bad token"})
+            if url.path == "/api/state":
+                state = collect()
+                state["tone"] = worst_tone(state)
+                return self.send(200, state)
+            if url.path == "/api/snapshots":
+                rows, err = snapshots(one("repo"))
+                return self.send(200 if not err else 502, {"rows": rows or [], "error": err})
+            if url.path == "/api/ls":
+                rows, err = list_tree(one("repo"), one("snap", "latest"), one("path"))
+                return self.send(200 if not err else 502, {"rows": rows or [], "error": err})
+            if url.path == "/api/inplace":
+                ok, why = in_place_ok(one("repo"))
+                return self.send(200, {"ok": ok, "why": why})
+            return self.send(404, {"error": "no such path"})
+
+        def do_POST(self):                                   # noqa: N802
+            url = urllib.parse.urlparse(self.path)
+            if not self.allowed():
+                return self.send(401, {"error": "bad token"})
+            j = body(self)
+            if url.path == "/api/extract":
+                rc, msg = extract(j.get("repo", ""), j.get("snap", "latest"),
+                                  j.get("path", ""), j.get("to", ""))
+                return self.send(200, {"rc": rc, "message": msg})
+            if url.path == "/api/restore":
+                rc, msg = restore_in_place(j.get("repo", ""), j.get("snap", "latest"),
+                                           j.get("path", ""), j.get("confirm") or None)
+                return self.send(200, {"rc": rc, "message": msg})
+            return self.send(404, {"error": "no such path"})
+
+    # Threading, because an extract holds its request open for as long as the
+    # copy takes and the page must stay usable meanwhile.
+    srv = http.server.ThreadingHTTPServer((bind, port), Handler)
+    where = "http://%s:%d/" % ("localhost" if bind in LOCAL_BINDS else bind, port)
+    print("backup ui on %s" % where)
+    if bind not in LOCAL_BINDS:
+        print("bound off-loopback, so every request needs the token")
+    print("ctrl+c to stop")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0, ""
+
+
 def start_run():
     """Start a backup on the service host and return at once.
 
@@ -514,10 +617,21 @@ def main():
     ap.add_argument("--snapshot", default="latest", help="snapshot id (default: latest)")
     ap.add_argument("--path", default="", help="path inside the snapshot")
     ap.add_argument("--to", help="local directory for --extract; it must not exist")
+    ap.add_argument("--serve", action="store_true",
+                    help="present the backup service as a local web page")
+    ap.add_argument("--bind", default="127.0.0.1", help="address for --serve (default loopback)")
+    ap.add_argument("--port", type=int, default=7979, help="port for --serve (default 7979)")
+    ap.add_argument("--token", help="secret --serve demands when it binds off-loopback")
     ap.add_argument("--confirm", metavar="PATH",
                     help="repeat --path exactly to perform an in-place restore. "
                          "Without it, --restore only reports what it would write.")
     args = ap.parse_args()
+
+    if args.serve:
+        rc, msg = serve(args.bind, args.port, args.token)
+        if msg:
+            print(msg)
+        return rc
 
     if args.snapshots:
         snaps, err = snapshots(args.snapshots)
