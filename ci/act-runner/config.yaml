@@ -61,7 +61,16 @@ container:
   # A mounted directory keeps compiled artifacts across runs with nothing in the path to fail. A workflow opts in with `swift build --scratch-path /swiftcache/<repo>`.
   #
   # The trade is that jobs share it, so a workflow picks a subdirectory of its own and nothing collides.
-  options: "--volume /home/jimmy/forge-swift:/swiftcache"
+  # The docker socket is mounted because MWServer builds images and runs its suite in one. A job
+  # container without it cannot run docker at all, and host mode is no answer: the runner itself
+  # runs in a container that carries the socket and no docker client, so a host-mode job has the
+  # same gap in a different place.
+  #
+  # The trade is real. A job that can reach the host's docker daemon can do anything on the host,
+  # so this suits a forge whose repositories are all ours and would not suit one that takes work
+  # from outside.
+  options: "--volume /home/jimmy/forge-swift:/swiftcache --volume /var/run/docker.sock:/var/run/docker.sock"
   valid_volumes:
     - /home/jimmy/forge-swift
+    - /var/run/docker.sock
   force_pull: false
