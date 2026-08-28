@@ -26,6 +26,7 @@ Usage: backup-status.py [--json] [--run] [--check] [--serve]
 """
 import argparse
 import datetime
+import errno
 import json
 import os
 import shlex
@@ -554,7 +555,21 @@ def serve(bind, port, token):
 
     # Threading, because an extract holds its request open for as long as the
     # copy takes and the page must stay usable meanwhile.
-    srv = http.server.ThreadingHTTPServer((bind, port), Handler)
+    try:
+        srv = http.server.ThreadingHTTPServer((bind, port), Handler)
+    except OSError as exc:
+        # A stack trace is the wrong answer to "that port is taken", which is the
+        # most ordinary way this fails: the page is already open somewhere else.
+        if exc.errno == errno.EADDRINUSE:
+            return 1, ("port %d on %s is already in use.\n"
+                       "Another --serve is probably running: `pkill -f \"backup-status.py --serve\"`,\n"
+                       "or pick another port with --port." % (port, bind))
+        if exc.errno == errno.EACCES:
+            return 1, ("not allowed to bind port %d. Ports below 1024 need root, "
+                       "so pick a higher one with --port." % port)
+        if exc.errno in (errno.EADDRNOTAVAIL, errno.ENOENT):
+            return 1, "cannot bind %s. That address is not on this machine." % bind
+        return 1, "cannot serve on %s:%d: %s" % (bind, port, exc)
     where = "http://%s:%d/" % ("localhost" if bind in LOCAL_BINDS else bind, port)
     print("backup ui on %s" % where)
     if bind not in LOCAL_BINDS:
