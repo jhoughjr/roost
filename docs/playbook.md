@@ -552,6 +552,14 @@ write unless `--confirm` repeats the path exactly. It refuses entirely for
 `opi-critical`, whose snapshots hold the staging directory that every run wipes:
 extract the tar and follow `docs/opi-backup-restore.md` instead.
 
+Tab 5 of `roost ui` does the same walk without the command line. The status view
+lists the repositories, `enter` opens one repository's snapshots newest first,
+and `enter` again walks the snapshot's tree: `enter` descends, `left` goes back
+up, `q` returns. On a selected entry, `e` extracts it to a path you type, which
+must not already exist, and `R` restores it in place. `R` asks you to type the
+path in full, because a keystroke is too cheap for the one action here that
+cannot be undone.
+
 ### Locks, and why a failed step is not a failed backup
 
 Retention and verification run after the snapshots are stored, so a failure
