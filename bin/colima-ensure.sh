@@ -21,6 +21,15 @@
 # running. `colima start` with no arguments reads ~/.colima/default/colima.yaml,
 # so the VM keeps the cpu, memory, vmType and rosetta settings it already has.
 #
+# That file is load-bearing, and this script is the reason. Because it passes no
+# flags, the capability comes from the config rather than from here. A machine
+# whose colima.yaml loses `vmType: vz` or `rosetta: true` starts a VM which
+# looks healthy and cannot execute amd64. The check after the start below does
+# catch it, and it catches it after the fact, so treat those two keys as
+# settings which matter rather than as defaults. To read them back:
+#
+#     grep -E '^(vmType|rosetta):' ~/.colima/default/colima.yaml
+#
 # Config, via ~/.roostrc KEY=VALUE lines:
 #   ROOST_COLIMA_PROFILE   colima profile name (default: default)
 set -euo pipefail
