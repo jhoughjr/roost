@@ -73,8 +73,15 @@ container:
   # resolves to Cloudflare from here as it does everywhere else. Pointing it at the docker
   # gateway keeps the clone on the LAN, and the box holds a certificate for the name, so TLS
   # still verifies. Without this a dependency clone leaves the network and comes back.
-  options: "--volume /home/jimmy/forge-swift:/swiftcache --volume /var/run/docker.sock:/var/run/docker.sock --add-host forgejo.jimmyhoughjr.net:10.0.0.1"
+  # The cross-compilation SDK is mounted so a job can build amd64 on this arm64 box. The target is
+  # /root/.swiftpm and not a path derived from HOME, because `swift sdk` resolves its search path
+  # from the real user and the job container runs as root. Mounted anywhere else, `swift sdk list`
+  # returns nothing while the mount itself looks correct.
+  # It is read-only because every later run shares the one bundle, so a job cannot corrupt it.
+  options: "--volume /home/jimmy/forge-swift:/swiftcache --volume /var/run/docker.sock:/var/run/docker.sock --volume /home/jimmy/.swiftpm:/root/.swiftpm:ro --add-host forgejo.jimmyhoughjr.net:10.0.0.1"
+  # act_runner refuses a mount that is not named here, so a path added above is added here too.
   valid_volumes:
     - /home/jimmy/forge-swift
     - /var/run/docker.sock
+    - /home/jimmy/.swiftpm
   force_pull: false
