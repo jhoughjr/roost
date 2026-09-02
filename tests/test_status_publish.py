@@ -262,5 +262,85 @@ class MirrorUnreachableAtPublishTest(StatusPublishFixture):
                           before)
 
 
+class HomebrewOnThePathTest(StatusPublishFixture):
+    """The collectors shell out to `gh`, which lives in /opt/homebrew/bin.
+
+    The Local Network Privacy hop used to be the only thing that put it on the
+    PATH, and that hop is skipped when SSH_CONNECTION is set. So a run driven
+    over ssh from another machine ran without `gh`: every GitHub-backed
+    collector took its "absent data leaves the board alone" path, and the run
+    reported success over a board whose GitHub half had not moved.
+
+    Nothing failed and nothing was marked stale. The tiles just stopped
+    tracking, which is the worst way for a status board to be wrong.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # A stand-in for /opt/homebrew/bin. The real one is on the machine
+        # running these tests, so without this the "no gh" case would find the
+        # operator's own gh and the test would assert nothing.
+        self.brew = os.path.join(self.tmp, "brew-bin")
+        os.makedirs(self.brew, exist_ok=True)
+
+    def env(self, **kw):
+        base = {"ROOST_BREW_BIN": self.brew, "PATH": "/usr/bin:/bin"}
+        base.update(kw)
+        return base
+
+    def install_gh(self):
+        self.write_exec("gh", "#!/usr/bin/env bash\nexit 0\n", base=self.brew)
+
+    def path_seen_by_collectors(self, **kw):
+        """The PATH `roost stats` runs with — status.sh invokes $BIN/roost."""
+        seen = os.path.join(self.tmp, "collector-path")
+        self.write_exec("roost",
+                        "#!/usr/bin/env bash\n"
+                        f'printf "%s" "$PATH" > {seen}\n'
+                        "exit 0\n")
+        self.run_status("hello", extra_env=self.env(**kw))
+        with open(seen) as f:
+            return f.read()
+
+    def test_the_collectors_run_with_the_brew_bin_on_the_path(self):
+        self.assertIn(self.brew, self.path_seen_by_collectors())
+
+    def test_it_is_prepended_so_it_beats_an_older_gh_elsewhere(self):
+        self.assertTrue(self.path_seen_by_collectors().startswith(self.brew + ":"))
+
+    def test_an_ssh_driven_run_gets_it_too(self):
+        """The case that was broken. SSH_CONNECTION set means the loopback hop
+        is skipped, correctly — an sshd-spawned process is already exempt from
+        the gate the hop exists for — and the PATH went unfixed with it."""
+        path = self.path_seen_by_collectors(
+            SSH_CONNECTION="10.0.0.2 51000 10.0.0.3 22")
+        self.assertIn(self.brew, path)
+
+    def test_a_path_that_already_has_it_is_left_alone(self):
+        # No duplicate entry: the PATH is inherited down a long pipeline, and a
+        # doubled entry is the kind of noise that hides a real one.
+        path = self.path_seen_by_collectors(PATH=f"{self.brew}:/usr/bin:/bin")
+        self.assertEqual(path.count(self.brew), 1)
+
+    def test_a_host_without_that_directory_is_left_alone(self):
+        missing = os.path.join(self.tmp, "no-such-brew")
+        path = self.path_seen_by_collectors(ROOST_BREW_BIN=missing)
+        self.assertNotIn(missing, path)
+
+    def test_a_run_without_gh_says_so_loudly(self):
+        """Every collector is non-fatal by contract, so the run still succeeds
+        and still deploys. This warning is the only thing separating a healthy
+        deploy from one that published a half-frozen board."""
+        r = self.run_status("hello", extra_env=self.env())
+        self.assertIn("gh is not on PATH", r.stderr)
+        # Still a successful deploy — the warning informs, it does not gate.
+        self.assertEqual(r.returncode, 0)
+
+    def test_a_run_with_gh_stays_quiet(self):
+        self.install_gh()
+        r = self.run_status("hello", extra_env=self.env())
+        self.assertNotIn("gh is not on PATH", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
