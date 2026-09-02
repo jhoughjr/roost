@@ -1,2 +1,7 @@
 # Claude Code worktrees — local scratch, never part of the repo.
 .claude/
+# Git worktrees checked out inside the repo. A worktree's root is a FILE holding
+# a gitdir pointer, not a directory git recurses into, so the rule above does
+# not cover it and a plain `git add -A` sweeps it in as a one-line embedded
+# repository — committing a path that means nothing on any other clone.
+.worktrees/
