@@ -13,6 +13,43 @@ set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=/dev/null
 . "$BIN/roost-env.sh"
+
+# == Homebrew on the PATH, whichever route the run came in by ==
+# The collectors shell out to `gh`, which lives in /opt/homebrew/bin. A login
+# shell has it; a non-interactive `ssh mini .../status.sh` does not.
+#
+# The loopback hop below used to be the only thing that put it there, and that
+# hop is SKIPPED when SSH_CONNECTION is set - correctly, because an sshd-spawned
+# process is already exempt from the gate the hop exists for. So a run driven
+# over ssh from another machine ran without `gh`, every GitHub-backed collector
+# took its "absent data leaves the board alone" path, and the run reported
+# success over a board whose GitHub half had not moved:
+#
+#   ci-status: Phoenix-Electron did not answer - its tiles keep their last verdict
+#   ci-health: no finished runs found (gh unavailable?) - leaving board as-is
+#
+# Nothing failed and nothing was marked stale. The tiles simply stopped
+# tracking. The scheduled agent takes the hop and was never affected, which is
+# why this only appeared in a hand-driven deploy.
+# The location is overridable because it is not the same everywhere: Apple
+# silicon puts it at /opt/homebrew/bin, an Intel Mac at /usr/local/bin. Only
+# added when it exists, so a host without it is left exactly as it was.
+ROOST_BREW_BIN="${ROOST_BREW_BIN:-/opt/homebrew/bin}"
+case ":$PATH:" in
+  *":$ROOST_BREW_BIN:"*) ;;
+  # `|| true` is load-bearing under `set -e`: on a host with no such directory
+  # the test is the branch's last command, and its non-zero status would end
+  # the run before it started.
+  *) [ -d "$ROOST_BREW_BIN" ] && { PATH="$ROOST_BREW_BIN:$PATH"; export PATH; } || true ;;
+esac
+
+# Say it once, loudly, rather than leaving it to a per-collector note in the
+# middle of a long log. Without `gh` the run still succeeds and still deploys —
+# every collector is non-fatal by contract — so the only thing distinguishing a
+# healthy deploy from one that published a half-frozen board is this line.
+command -v gh >/dev/null 2>&1 || \
+  echo "⚠ gh is not on PATH — every GitHub-backed tile will keep its last value and the deploy will still report success" >&2
+
 SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
 SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
 DOCS="${ROOST_DOCS:-$HOME/repos/docs}"
