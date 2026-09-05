@@ -29,6 +29,11 @@
 # energy was bought at the wall earlier, and counting it twice is the error
 # this field exists to let you avoid).
 #
+# `temps` carries every temperature the box exposes, the drive first, and each
+# reading brings its own warning and critical limits so a consumer needs no
+# table of sensors. `fanPwm` is the duty the board commands its fan, 0 to 255.
+# Linux only for now: macOS has no temperature source here yet.
+#
 # `wattsSrc` ("macmon" | "plug") rides along so the map can name the
 # instrument. The two are NOT the same measurement — macmon reads the die,
 # the plug reads the wall and so includes PSU loss and anything else on that
@@ -51,7 +56,8 @@ PULSE=${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}
 
 # Everything from here to the runner block is per-platform. Both branches set
 # the same variables: NAME LOAD1 CORES MODEL MEM_*_MB DISK_*_MB and the
-# NET_JSON / WATTS_JSON / POWER_JSON fragments (empty string = field omitted).
+# NET_JSON / WATTS_JSON / POWER_JSON / TEMP_JSON fragments (empty string =
+# field omitted).
 case "$(uname -s)" in
 Darwin)
 
@@ -129,6 +135,10 @@ if [ -n "$IOREG" ]; then
     POWER_JSON="$POWER_JSON,\"chargeW\":$(awk -v a="$AMP" -v v="$VOLT" 'BEGIN{printf "%.2f", a*v/1000000}')"
   fi
 fi
+
+# No temperatures from a Mac yet. macmon reads die temperatures beside the
+# system power we already take from it, so this is where they would come from.
+TEMP_JSON=""
 
 ;;
 Linux)
@@ -234,6 +244,94 @@ else
   fi
 fi
 
+# Temperatures, the drive first.
+# An NVMe drive that overheats leaves the PCIe bus, and this box keeps docker's data-root on one, so the drive is the sensor that explains an outage.
+# The thermal zones are the context around it, because they say whether the whole board is hot or only the drive is.
+#
+# Every sensor is named from its own `type` file, never from its index, because an index says nothing about what the sensor measures.
+# A zone with no readable type reports as `zoneN`, which states plainly that only the index is known.
+#
+# Each reading carries its own warning and critical limit, so a consumer can colour it without a table of sensors.
+# A zone takes its limits from its own passive trip points, the temperatures at which the kernel throttles it.
+# A zone that declares none takes the lowest and the highest passive trip on the box, because the zones of one SoC share a die and a throttle policy.
+# On the RK3588 that is 75 C and 85 C, and soc-thermal is the only zone that declares them.
+# Its critical trip of 115 C is a shutdown, so it is too late to be a warning.
+#
+# The drive takes 70 C and 80 C.
+# 70 C is the top of the operating range a consumer NVMe drive specifies, and where it starts to throttle itself.
+# A drive declares one composite warning limit and one composite critical limit, and this one puts both at 84.85 C.
+# 80 C still leaves room to act before the drive protects itself.
+# The sysfs root the readings come from.
+# It is empty in every real run, and a test sets it to a tree it built, because sysfs itself cannot be faked.
+SYSFS=${ROOST_SYSFS_ROOT:-}
+
+TEMPS=""
+TEMP_N=0
+
+for f in "$SYSFS"/sys/class/nvme/nvme*/hwmon*/temp1_input; do
+  [ "$TEMP_N" -lt 12 ] || break
+  MC=$(cat "$f" 2>/dev/null || true)
+  [ -n "$MC" ] || continue
+  # Two directories up from the hwmon reading is the controller, which names the drive: nvme0, nvme1.
+  DEV=$(basename "$(dirname "$(dirname "$f")")")
+  TEMPS="$TEMPS,{\"n\":\"$DEV\",\"kind\":\"drive\",\"c\":$(awk -v m="$MC" 'BEGIN{printf "%.1f", m/1000}'),\"warnC\":70,\"critC\":80}"
+  TEMP_N=$((TEMP_N + 1))
+done
+
+# The passive trips of the whole box, which every zone that declares none of its own falls back to.
+BOX_WARN=""
+BOX_CRIT=""
+for t in "$SYSFS"/sys/class/thermal/thermal_zone*/trip_point_*_type; do
+  [ "$(cat "$t" 2>/dev/null || true)" = "passive" ] || continue
+  TT=$(cat "${t%_type}_temp" 2>/dev/null || true)
+  [ -n "$TT" ] || continue
+  if [ -z "$BOX_WARN" ] || [ "$TT" -lt "$BOX_WARN" ]; then BOX_WARN=$TT; fi
+  if [ -z "$BOX_CRIT" ] || [ "$TT" -gt "$BOX_CRIT" ]; then BOX_CRIT=$TT; fi
+done
+
+for z in "$SYSFS"/sys/class/thermal/thermal_zone*; do
+  [ "$TEMP_N" -lt 12 ] || break
+  ZC=$(cat "$z/temp" 2>/dev/null || true)
+  [ -n "$ZC" ] || continue
+
+  ZN=$(tr -d '\0' < "$z/type" 2>/dev/null | tr -dc 'a-zA-Z0-9_-' | sed 's/-thermal$//' | cut -c1-16 || true)
+  # A zone whose type is missing keeps its index for a name, and the name says so.
+  [ -n "$ZN" ] || ZN="zone${z##*thermal_zone}"
+
+  ZWARN=""
+  ZCRIT=""
+  for t in "$z"/trip_point_*_type; do
+    [ "$(cat "$t" 2>/dev/null || true)" = "passive" ] || continue
+    TT=$(cat "${t%_type}_temp" 2>/dev/null || true)
+    [ -n "$TT" ] || continue
+    if [ -z "$ZWARN" ] || [ "$TT" -lt "$ZWARN" ]; then ZWARN=$TT; fi
+    if [ -z "$ZCRIT" ] || [ "$TT" -gt "$ZCRIT" ]; then ZCRIT=$TT; fi
+  done
+  if [ -z "$ZWARN" ]; then ZWARN=$BOX_WARN; ZCRIT=$BOX_CRIT; fi
+
+  # A box that declares no passive trip anywhere sends the reading with no limits, rather than limits we made up.
+  LIMITS=""
+  if [ -n "$ZWARN" ]; then LIMITS=",\"warnC\":$((ZWARN / 1000)),\"critC\":$((ZCRIT / 1000))"; fi
+
+  TEMPS="$TEMPS,{\"n\":\"$ZN\",\"kind\":\"soc\",\"c\":$(awk -v m="$ZC" 'BEGIN{printf "%.1f", m/1000}')$LIMITS}"
+  TEMP_N=$((TEMP_N + 1))
+done
+
+# The board fan is PWM only.
+# sysfs commands a duty from 0 to 255 and offers no tachometer, so this is what the board asks the fan to do, not a measured speed.
+# A commanded 0 beside a climbing drive temperature is the pair that explains an outage.
+FAN_JSON=""
+for h in "$SYSFS"/sys/class/hwmon/hwmon*; do
+  [ "$(cat "$h/name" 2>/dev/null || true)" = "pwmfan" ] || continue
+  PWM=$(cat "$h/pwm1" 2>/dev/null || true)
+  if [ -n "$PWM" ]; then FAN_JSON=",\"fanPwm\":$PWM"; fi
+  break
+done
+
+TEMP_JSON=""
+if [ -n "$TEMPS" ]; then TEMP_JSON=",\"temps\":[${TEMPS#,}]"; fi
+TEMP_JSON="$TEMP_JSON$FAN_JSON"
+
 ;;
 *)
   echo "node-report: unsupported platform $(uname -s)" >&2; exit 1 ;;
@@ -263,5 +361,5 @@ fi
 curl -sf -m 10 -X POST "$PULSE/api/nodes" \
   -H "x-roost-node-key: $KEY" \
   -H "content-type: application/json" \
-  -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON}" \
+  -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON$TEMP_JSON}" \
   > /dev/null

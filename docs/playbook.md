@@ -425,6 +425,14 @@ Linux from `/sys/class/power_supply` — a box with no battery reads `ac`. A nod
 on battery bills 0 toward grid cost on /roost/ (its watts were already paid at
 the wall) and shows a 🔋 badge; /map shows ⚡AC / 🔋 per node.
 
+**Temperatures (added 2026-09-05).** Linux nodes report every temperature sysfs exposes, as `temps`, and pulse draws them as a Temperatures card with the drive first. Each entry carries a name, the reading in C, and its own warning and critical limit, so the card colours a number without holding a table of sensors. Names come from the sensor itself: an NVMe entry is named for its controller (`nvme0`), and a thermal zone is named from its `type` file (`soc`, `bigcore0`, `gpu`, `npu`), never from its index. A zone with no readable type reports as `zoneN`, which says that only the index is known.
+
+A zone takes its limits from its own passive trip points, the temperatures at which the kernel throttles it. A zone that declares none takes the lowest and the highest passive trip found on the box, because the zones of one SoC share a die and a throttle policy. On the opi (RK3588) that is 75 C and 85 C, declared by `soc-thermal` alone; its critical trip of 115 C is a shutdown, so it is too late to be a warning. A drive takes 70 C and 80 C. 70 C is the top of the operating range a consumer NVMe drive specifies, and where it starts to throttle itself. The drive in the opi declares 84.85 C for both its composite warning limit and its composite critical limit, so 80 C still leaves room to act first.
+
+Linux nodes also report `fanPwm` where the board drives a fan, which is the duty sysfs commands from 0 to 255. There is no tachometer on the opi, so this is what the board asks the fan to do, not a measured speed. The card warns when the fan reads 0 while a sensor is at or over its warning limit.
+
+Why it exists: on 2026-09-04 the opi's NVMe drive overheated and left the PCIe bus after 9 days of uptime. Docker keeps its `data-root` on that drive, so docker went down and took vault and forgejo with it. The drive had been moved above a router, with no heatsink and no airflow. The kernel already carries `nvme_core.default_ps_max_latency_us=0` and `pcie_aspm=off`, so the APST bug is ruled out and the cause was heat. macOS nodes send no temperatures yet.
+
 Putting a new box on the meter:
 
 1. copy `~/.roost_node_key` from the workstation (chmod 600)
