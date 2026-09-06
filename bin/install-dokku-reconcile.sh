@@ -12,6 +12,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 
 install -d "$DEST" "$UNITS"
 install -m 755 "$SRC/dokku-reconcile.sh" "$DEST/dokku-reconcile.sh"
+[ -f "$SRC/mesh-alert.sh" ] && install -m 755 "$SRC/mesh-alert.sh" "$DEST/mesh-alert.sh"
 
 cat > "$UNITS/dokku-reconcile.service" <<'UNIT'
 [Unit]
@@ -21,10 +22,23 @@ Documentation=https://github.com/jhoughjr/roost/blob/main/bin/dokku-reconcile.sh
 [Service]
 Type=oneshot
 ExecStart=%h/opt/dokku-reconcile/dokku-reconcile.sh
-# Best effort. The script exits non-zero for the one case a person must act on —
-# an app whose image is gone — and that must not mark the unit failed and stop
-# the timer, because the next run is what rebuilds the proxy.
-SuccessExitStatus=1
+# Deliberately NOT SuccessExitStatus=1 any more. The non-zero exit is the one
+# case a person must act on, and OnFailure is how that reaches them — treating
+# it as success would keep the timer healthy and tell nobody.
+OnFailure=dokku-reconcile-alert.service
+UNIT
+
+# Told over LoRa, because everything else reports over the network that breaks.
+cat > "$UNITS/dokku-reconcile-alert.service" <<'UNIT'
+[Unit]
+Description=Say over the mesh that the reconcile found something it cannot fix
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/mesh-alert.env
+# The last line the reconcile wrote is the whole message. A person needs to know
+# to go and look, not to be told what to think.
+ExecStart=/bin/sh -c 'exec %h/opt/dokku-reconcile/mesh-alert.sh "opi: $(journalctl --user -u dokku-reconcile.service -n 20 --no-pager -o cat 2>/dev/null | grep -E "redeploy needed|no image" | tail -1 | cut -c1-120)"'
 UNIT
 
 cat > "$UNITS/dokku-reconcile.timer" <<'UNIT'
