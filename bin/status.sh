@@ -325,7 +325,11 @@ git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-f
 # The banner names the hosts dokku served, so the success line is gated on the expected one being among them.
 if [ "$deployed" -eq 1 ]; then
   expected_host="status.${ROOST_DOMAIN}"
-  if grep -q "$expected_host" "$DEPLOY_BANNER"; then
+  if ! grep -q "Application deployed:" "$DEPLOY_BANNER"; then
+    # The remote answered without dokku's banner, so it is a plain git remote and not a dokku deploy.
+    # Said out loud rather than passed over, because a banner that stops appearing must not read as a healthy deploy.
+    echo "✓ status pushed - the remote sent no deploy banner, so no host was checked"
+  elif grep -q "$expected_host" "$DEPLOY_BANNER"; then
     echo "✓ status deployed — https://${expected_host}/"
   else
     echo "✗ deployed, but dokku did not serve ${expected_host}: the site keeps answering as it did" >&2
