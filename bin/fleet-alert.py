@@ -93,6 +93,67 @@ def record_event(config, title, msg, kind="alert", subject=None):
     except Exception as e:
         print(f"pulse event not recorded (ignored): {e}")
 
+# The line here already sits near 100 V against a 120 V nominal, so an absolute
+# threshold would either fire for ever or be set so low it never fires at all.
+# What is worth saying is a change: the line dropped away from where it has been
+# sitting, which is what a compressor starting looks like.
+VOLTS_DIP = 4.0
+# Below this the supply is bad whatever the baseline, and saying so is worth a
+# repeat that the dip check would suppress.
+VOLTS_FLOOR = 92.0
+# Long enough to hold a dip that happened between two runs of this watchdog,
+# short enough that the median still describes the line as it is now.
+VOLTS_WINDOW_MIN = 20
+
+
+def check_volts(cfg, prev):
+    """Compare each plug's lowest reading against the line it has been sitting on.
+
+    Returns the state to carry forward, so a dip is reported once rather than on
+    every pass while the same samples stay inside the window.
+    """
+    state = {}
+    try:
+        pulse = cfg.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/")
+        url = f"{pulse}/api/history?hours={VOLTS_WINDOW_MIN / 60:g}"
+        # A named agent: the edge refuses python-urllib's default.
+        req = urllib.request.Request(url, headers={"User-Agent": "roost-fleet-alert"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.load(r)
+    except Exception as e:
+        print(f"volts check skipped (ignored): {e}")
+        return prev.get("volts", {})
+
+    series = {}
+    for p in (d.get("samples") or d.get("points") or d.get("rows") or []):
+        for t in (p.get("tapo") or []):
+            if isinstance(t.get("v"), (int, float)):
+                series.setdefault(t["n"], []).append(float(t["v"]))
+
+    for name, vals in series.items():
+        # Two readings cannot describe a baseline, so nothing is claimed from them.
+        if len(vals) < 5:
+            continue
+        ordered = sorted(vals)
+        median = ordered[len(ordered) // 2]
+        low = ordered[0]
+        drop = round(median - low, 1)
+        state[name] = {"median": round(median, 1), "low": round(low, 1)}
+        was = prev.get("volts", {}).get(name, {})
+
+        if low < VOLTS_FLOOR:
+            if was.get("low", 999) >= VOLTS_FLOOR:
+                notify("Roost: mains voltage low",
+                       f"{name} reached {low:.1f} V, under the {VOLTS_FLOOR:.0f} V floor")
+        elif drop >= VOLTS_DIP:
+            # Reported when the dip is new, so a sag sitting in the window does not
+            # earn a message every pass until it ages out.
+            if round(was.get("median", 0) - was.get("low", 0), 1) < VOLTS_DIP:
+                notify("Roost: mains voltage dipped",
+                       f"{name} fell {drop:.1f} V to {low:.1f} V from about {median:.1f} V")
+    return state
+
+
 def main():
     tmp = os.path.join(tempfile.gettempdir(), "roost-fleet-check.json")
     r = subprocess.run([os.path.join(BIN, "fleet-board.py"), tmp],
@@ -163,9 +224,15 @@ def main():
     if not prev.get("collect_ok", True):
         notify("Roost: recovered", "fleet collection working again")
 
+    # The line is checked here rather than in its own watchdog, because this one already
+    # runs on a schedule and already knows how to say something once instead of every pass.
+    cur["volts"] = check_volts(load_config(), prev)
+
     json.dump(cur, open(STATE, "w"))
     print(f"ok: {sum(1 for s in apps.values() if s == 'up')}/{len(apps)} up, "
-          f"mem {cur['mem']}, disk {cur['disk']}")
+          f"mem {cur['mem']}, disk {cur['disk']}"
+          + (", volts " + ", ".join(f"{n} {v['low']:.0f}-{v['median']:.0f}"
+                                    for n, v in sorted(cur["volts"].items())) if cur["volts"] else ""))
 
 if __name__ == "__main__":
     main()
