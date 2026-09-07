@@ -67,8 +67,20 @@ def collect_app(app):
         rss_kb = sum(int(x) for x in ssh("enter", app, "web", "ps", "-o", "rss=").split() if x.isdigit())
         if rss_kb:
             mem_mb = f"{rss_kb / 1024:.0f} MB"
-    expected = EXPECTED.get(app, "200")
-    healthy = running and code == expected
+    # A redirect is a healthy answer, not a fault. This probe reaches nginx over plain
+    # http at the box, so every app that sends callers to https answers 301 or 302, and
+    # comparing that against a flat "200" called forgejo, vault, rookery and rulings
+    # degraded while all four were serving correctly. An estate that reads as permanently
+    # half broken is one nobody looks at, which is the same fatigue as an alert flood.
+    #
+    # A 4xx still counts as a fault unless ROOST_EXPECTED_HTTP names it, because a 404 can
+    # equally mean an app with no root route or an app whose routes are wrong, and this
+    # check cannot tell those apart. Naming the ones that are known good is a person's job.
+    expected = EXPECTED.get(app)
+    if expected:
+        healthy = running and code == expected
+    else:
+        healthy = running and code.isdigit() and 200 <= int(code) < 400
     http_bit = f"http {code}"
     if expected != "200" and code == expected:
         http_bit += " (expected)"
