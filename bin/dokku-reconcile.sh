@@ -90,6 +90,47 @@ for container in $known; do
   fi
 done
 
+# Containers and images are not the whole health of an app.
+# On 2026-09-07 every app had a container and an image, and every site answered 502, because nginx held no TLS server block for their names.
+# dokku clears each app's vhost at boot and rebuilds it per app, so one app that fails to restore aborts the run and leaves the rest cleared.
+# cloudflared then reaches nginx over TLS at 127.0.0.1:443, gets "unrecognized name", and answers 502 to the world.
+# This pass therefore asks the question the tunnel asks: does nginx serve this name at all.
+#
+# A fault here is the absence of an HTTP answer, never a bad one.
+# An app that answers 500 has a working vhost and a problem of its own, and restarting the proxy for it would fix nothing.
+unserved=0
+unserved_names=""
+# One container read for every app, because /home/dokku belongs to dokku and this account is not in that group.
+vhosts=$(docker run --rm -v /home/dokku:/d:ro alpine sh -c 'for a in /d/*/VHOST; do [ -f "$a" ] || continue; printf "%s %s\n" "$(basename "$(dirname "$a")")" "$(tr "\n" " " < "$a")"; done' 2>/dev/null || true)
+
+# An app is served when nginx answers for one of its names, on either port.
+# Only two apps hold a certificate and the rest reach the tunnel over port 80, so asking 443 alone condemns every app that was never meant to answer there.
+# That error also rebuilds the whole proxy on every pass, which is the expense this script exists to avoid.
+probe_name() {
+  # -k because the certificate does not matter here, only that nginx answers for the name.
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 6 --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null </dev/null)
+  if [ -z "$code" ] || [ "$code" = "000" ]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 -H "Host: $1" "http://127.0.0.1/" 2>/dev/null </dev/null)
+  fi
+  printf '%s' "$code"
+}
+
+# Every name the app owns, because the public name is often not the first line of VHOST.
+while read -r app hosts; do
+  [ -n "${hosts:-}" ] || continue
+  served=0
+  for host in $hosts; do
+    # An answer of any kind means nginx holds a vhost for the name, which is the only question here.
+    code=$(probe_name "$host")
+    if [ -n "$code" ] && [ "$code" != "000" ]; then served=1; break; fi
+  done
+  if [ "$served" -eq 0 ]; then
+    unserved=$((unserved + 1))
+    unserved_names="$unserved_names $app"
+    say "  $app: nginx answers for none of its names, so the tunnel cannot reach it"
+  fi
+done <<< "$vhosts"
+
 # Rebuilding every vhost is what unwedges nginx, and it is also the expensive
 # part — five minutes across twenty-three apps. Doing it every ten minutes to
 # find nothing wrong is a watchdog that spends its life rebuilding a working
@@ -102,22 +143,44 @@ done
 # report, not a thing to keep fixing.
 state="${XDG_STATE_HOME:-$HOME/.local/state}/dokku-reconcile.last"
 install -d "$(dirname "$state")" 2>/dev/null || true
-now="started=$started imageless=$imageless_names"
+now="started=$started imageless=$imageless_names unserved=$unserved_names"
 was=$(cat "$state" 2>/dev/null || true)
 printf '%s\n' "$now" > "$state" 2>/dev/null || true
 
-if [ "$started" -gt 0 ] || [ "$now" != "$was" ]; then
+if [ "$started" -gt 0 ] || [ "$unserved" -gt 0 ] || [ "$now" != "$was" ]; then
   build=$(dok proxy:build-config --all)
   if printf '%s' "$build" | grep -qi "Reloading nginx"; then
     say "  proxy: rebuilt, nginx reloaded"
   else
-    say "  proxy: rebuild did not report a reload — check nginx by hand"
+    say "  proxy: rebuild did not report a reload - check nginx by hand"
+  fi
+  # A rebuild that reported a reload and still does not serve is the failure that looks like success.
+  # Ask again rather than trust the reload, because the reload is what was trusted last time.
+  if [ "$unserved" -gt 0 ]; then
+    still=""
+    while read -r app hosts; do
+      [ -n "${hosts:-}" ] || continue
+      case " $unserved_names " in *" $app "*) ;; *) continue ;; esac
+      served=0
+      for host in $hosts; do
+        code=$(probe_name "$host")
+        if [ -n "$code" ] && [ "$code" != "000" ]; then served=1; break; fi
+      done
+      if [ "$served" -eq 0 ]; then
+        still="$still $app"
+      fi
+    done <<< "$vhosts"
+    if [ -n "$still" ]; then
+      say "  proxy: still not serving after the rebuild:$still"
+    else
+      say "  proxy: serving again for$unserved_names"
+    fi
   fi
 else
   say "  proxy: nothing changed since the last pass, left alone"
 fi
 
-say "dokku-reconcile: $checked apps, $started started, $imageless with no image"
+say "dokku-reconcile: $checked apps, $started started, $imageless with no image, $unserved not served"
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
 
 # Exit non-zero only for the thing a person must act on, so a timer stays quiet
