@@ -15,6 +15,7 @@
 #   roost apps                                   list deployed apps
 #   roost ps [app]                               container status
 #   roost logs <app> [-n N]                      tail app logs (default 200)
+#   roost forge-log <owner>/<repo> <run> [job]   read a forge job's log from the forge's own database
 #   roost restart <app>                          restart an app
 #   roost config <app> [KEY=VAL ...]             show or set app config
 #   roost doctor                                 diagnose the setup
@@ -75,6 +76,7 @@ case "$cmd" in
     ;;
   apps)   exec ssh -o BatchMode=yes "$DOKKU" apps:list ;;
   ps)     exec ssh -o BatchMode=yes "$DOKKU" ps:report "$@" ;;
+  forge-log) exec "$BIN/forge-log" "$@" ;;
   logs)
     app="${1:?usage: roost logs <app> [-n N]}"; shift || true
     n=200; [ "${1:-}" = "-n" ] && n="${2:-200}"

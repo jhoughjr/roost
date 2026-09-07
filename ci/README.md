@@ -189,6 +189,30 @@ Hold the client version in step with the forge. minio-go v7.0.90 accepts an abse
 a read and v7.0.98 refuses it, so an older client passes an endpoint that Forgejo cannot use. `mc`
 carries the older one.
 
+## The job logs are not gone, they are in the database
+
+The API has no route that returns a job's log, and nothing on disk holds one either, so the
+conclusion has long been treated as the whole report. That is true of the API and false of the
+forge. Forgejo keeps every log, and `roost forge-log` reads them.
+
+```sh
+roost forge-log jimmy/coop 8            # every job of run 8, in order
+roost forge-log jimmy/coop 8 check      # one job by name
+roost forge-log --task 242              # one task, when the id is known
+```
+
+A log sits in one of two places and the task row says which. While `log_in_storage` is 0 the
+bytes are in `dbfs_data`, split across rows by offset, and they are plain text there despite the
+`.zst` name. Once the forge moves a task to the artifact store the row flips to 1 and the object
+really is zstd, under the same key, at
+`/var/lib/dokku/data/storage/vault/s3/forgejo/actions_log/<log_filename>` on the box. That file is
+world readable and the host has `zstd`, so neither case needs root or a signed request. The second
+case is the common one: on 2026-09-07 the forge held 242 tasks and 233 of them had been moved.
+
+Every query runs with `sqlite3 -readonly` and the statement goes in over stdin. It passes through
+this shell, ssh's shell and docker before sqlite sees it, and a query naming the `index` column
+carries backticks that a remote shell runs as a command when the text is passed as an argument.
+
 ## Two rules the box taught us
 
 **A Forgejo config change needs a full stop.** dokku starts the new container while the old one still holds the persistent volume, and Forgejo's queue takes an exclusive LevelDB lock on it. Two instances cannot share one data directory, so a rolling deploy deadlocks with `unable to lock level db`. Use `config:set --no-restart`, then `ps:stop`, then `ps:start`.
