@@ -48,6 +48,51 @@ def notify(title, msg):
             # Don't break the watchdog if ntfy fails
             print(f"ntfy error (ignored): {e}")
 
+    # The phone tells a person now, and forgets in about twelve hours.
+    # pulse keeps the same event for two years, which is what answers "what broke while I was away".
+    # Both, because neither alone is the whole job: one interrupts, the other remembers.
+    record_event(config, title, msg)
+
+
+def record_event(config, title, msg, kind="alert", subject=None):
+    """Write one event to pulse's durable record.
+
+    Never raises and never blocks the alert: a watchdog that dies because the
+    recorder is unreachable is worse than one that forgets.
+    """
+    try:
+        key_file = os.path.expanduser("~/.roost_node_key")
+        with open(key_file) as fh:
+            key = fh.read().strip()
+        if not key:
+            return
+        pulse = config.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/")
+        # The words can sit in either half: an estate-wide alert carries the fault in its
+        # title and the app names in its message, and a single app is the other way round.
+        # Reading only one half tagged the worst event on the board as a warning.
+        both = f"{title} {msg}".lower()
+        if "recovered" in both or "back up" in both or "back online" in both:
+            tone = "go"
+        elif any(w in both for w in ("trouble", "degraded", "down", "pressure", "failed", "unreachable")):
+            tone = "bad"
+        else:
+            tone = "warn"
+        body = json.dumps({
+            "kind": kind,
+            "source": "roost",
+            "subject": subject,
+            "tone": tone,
+            "message": f"{title}: {msg}" if not msg.startswith(title) else msg,
+        }).encode("utf-8")
+        req = urllib.request.Request(f"{pulse}/api/events", data=body, method="POST")
+        req.add_header("content-type", "application/json")
+        req.add_header("x-roost-node-key", key)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status != 200:
+                print(f"pulse warning: /api/events returned {response.status}")
+    except Exception as e:
+        print(f"pulse event not recorded (ignored): {e}")
+
 def main():
     tmp = os.path.join(tempfile.gettempdir(), "roost-fleet-check.json")
     r = subprocess.run([os.path.join(BIN, "fleet-board.py"), tmp],
