@@ -10,6 +10,8 @@ import json, os, subprocess, sys, tempfile, urllib.request
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.expanduser("~/.roost-fleet-state.json")
+# More apps than this changing in one pass is one estate-wide event, not many app events.
+COLLAPSE_AT = 3
 WARN_PCT = 85
 
 sys.path.insert(0, BIN)
@@ -76,11 +78,32 @@ def main():
         pass
     prev_apps = prev.get("apps", {})
 
+    # One notification per app is right for one app, and wrong for the estate.
+    # On 2026-09-07 a single wedged proxy flipped twenty apps in one pass and sent
+    # forty-five notifications for one cause, which is a flood nobody can act on.
+    # A change that touches many apps at once is one event and is reported as one.
+    trouble = []
+    recovered = []
     for app, state in apps.items():
         was = prev_apps.get(app, "up")
         if state != "up" and was == "up":
-            notify("Roost: app trouble", f"{app} is {state}")
+            trouble.append((app, state))
         elif state == "up" and was != "up" and app in prev_apps:
+            recovered.append(app)
+
+    # The apps are still named, because "the estate is degraded" alone sends a person
+    # to the box with nothing to look at first.
+    if len(trouble) > COLLAPSE_AT:
+        names = ", ".join(app for app, _ in sorted(trouble))
+        notify("Roost: the estate is degraded", f"{len(trouble)} apps at once: {names}")
+    else:
+        for app, state in trouble:
+            notify("Roost: app trouble", f"{app} is {state}")
+
+    if len(recovered) > COLLAPSE_AT:
+        notify("Roost: recovered", f"{len(recovered)} apps are back up: {', '.join(sorted(recovered))}")
+    else:
+        for app in recovered:
             notify("Roost: recovered", f"{app} is back up")
 
     for label, key in [("memory", "mem"), ("disk", "disk")]:
