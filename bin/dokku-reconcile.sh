@@ -129,6 +129,9 @@ while read -r app hosts; do
     say "  $app: nginx answers for none of its names, so the tunnel cannot reach it"
   fi
 done <<< "$vhosts"
+# The apps still not served once the pass is over. The rebuild below narrows it when it runs.
+still="$unserved_names"
+rebuilt=0
 
 # Rebuilding every vhost is what unwedges nginx, and it is also the expensive
 # part — five minutes across twenty-three apps. Doing it every ten minutes to
@@ -150,6 +153,7 @@ if [ "$started" -gt 0 ] || [ "$unserved" -gt 0 ] || [ "$now" != "$was" ]; then
   build=$(dok proxy:build-config --all)
   if printf '%s' "$build" | grep -qi "Reloading nginx"; then
     say "  proxy: rebuilt, nginx reloaded"
+    rebuilt=1
   else
     say "  proxy: rebuild did not report a reload - check nginx by hand"
   fi
@@ -181,6 +185,38 @@ fi
 
 say "dokku-reconcile: $checked apps, $started started, $imageless with no image, $unserved not served"
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
+
+# Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
+# Non-fatal by contract: no key file means no report, and a failed post changes nothing about the exit below.
+# The key travels in a header file and never on a command line.
+KEY_FILE="$HOME/.roost_node_key"
+PULSE="${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}"
+if [ -f "$KEY_FILE" ]; then
+  # The boot time rides along, because a box that reset is a better why than any app-level fact.
+  running=$(docker ps --format '{{.Names}}' | grep -E '^[a-zA-Z0-9_.-]+\.[a-z]+\.[0-9]+$' || true)
+  reading=$(printf '%s\n' "$vhosts" | python3 -c '
+import json, sys
+still = set(sys.argv[1].split())
+imageless = set(sys.argv[2].split())
+running = set(line.split(".")[0] for line in sys.argv[3].split())
+apps = []
+for line in sys.stdin:
+    parts = line.split()
+    if not parts:
+        continue
+    apps.append({"name": parts[0], "names": parts[1:], "served": parts[0] not in still, "running": parts[0] in running, "image": parts[0] not in imageless})
+print(json.dumps({"host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)")
+  HDR=$(mktemp)
+  chmod 600 "$HDR"
+  printf 'x-roost-node-key: %s\n' "$(cat "$KEY_FILE")" > "$HDR"
+  if curl -sf -m 20 -X POST "$PULSE/api/answers" -H "content-type: application/json" -H "@$HDR" --data-binary "$reading" > /dev/null; then
+    say "  report: what answers is on pulse"
+  else
+    say "  report: pulse did not take the reading"
+  fi
+  rm -f "$HDR"
+fi
 
 # Exit non-zero only for the thing a person must act on, so a timer stays quiet
 # when it has nothing to say.
