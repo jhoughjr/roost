@@ -25,7 +25,6 @@
 set -uo pipefail
 
 DOKKU="${DOKKU_TARGET:-dokku@localhost}"
-BOX="${BOX_TARGET:-localhost}"
 QUIET="${QUIET:-0}"
 
 say() { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
