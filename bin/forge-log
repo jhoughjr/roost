@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# forge-log — read a forge job's log, which no API and no disk path will give you.
+#
+# Forgejo serves job logs to a browser and offers no route that returns them. There is
+# no file on the box either. The logs are in the forge's own SQLite database, and after
+# a while they are moved into the artifact store, so a script that wants one has to know
+# both places.
+#
+#   roost forge-log jimmy/coop 8              every job of run 8, in order
+#   roost forge-log jimmy/coop 8 check        one job by name
+#   roost forge-log --task 242                one task, when the id is already known
+#
+# Read only. Every query runs with `sqlite3 -readonly`, and nothing here writes to the
+# forge's database under any circumstance.
+set -euo pipefail
+
+BIN="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "$BIN/roost-env.sh" 2>/dev/null || true
+
+BOX="${ROOST_FORGE_BOX:-jimmy@192.168.0.103}"
+APP="${ROOST_FORGE_APP:-forgejo}"
+DB="${ROOST_FORGE_DB:-/data/forgejo/forgejo.db}"
+# Where the forge's artifact store lands on the box. The forge writes to vault's S3
+# surface, and vault keeps a bucket's objects under this directory by their key.
+STORE="${ROOST_FORGE_STORE:-/var/lib/dokku/data/storage/vault/s3/forgejo/actions_log}"
+
+say() { printf '%s\n' "$*" >&2; }
+die() { say "forge-log: $*"; exit 1; }
+
+on_box() { ssh -o BatchMode=yes -o ConnectTimeout=15 "$BOX" "$@"; }
+
+# The statement goes in over stdin, not as an argument.
+# It travels through this shell, ssh's shell and docker before sqlite sees it, and a
+# query naming the `index` column carries backticks that the remote shell runs as a
+# command if the text is passed as an argument. Over stdin nothing re-reads it.
+q() {
+  printf '%s\n' "$1" | on_box "docker exec -i ${APP}.web.1 sqlite3 -readonly '$DB'" 2>/dev/null
+}
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: roost forge-log <owner>/<repo> <run index> [job name]
+       roost forge-log --task <id>
+
+  <run index> is the number in the run's URL, not its database id.
+USAGE
+  exit 2
+}
+
+# ── one task ────────────────────────────────────────────────────────────────
+# A task's log lives in one of two places and the row says which.
+#
+# log_in_storage 0 means the bytes are still in the database, split across dbfs_data
+# rows by offset. They are plain text there despite the .zst name, so they are read
+# as hex and turned back into bytes rather than decompressed.
+#
+# log_in_storage 1 means the task was moved to the artifact store, where it really is
+# zstd, under the same key. The file is world readable, so this needs no root and no
+# signed request.
+task_log() {
+  local id="$1" row stored fname
+  row="$(q "select log_in_storage || '|' || coalesce(log_filename,'') from action_task where id=$id;")"
+  [ -n "$row" ] || die "no task $id"
+  stored="${row%%|*}"
+  fname="${row#*|}"
+
+  if [ "$stored" = "1" ]; then
+    [ -n "$fname" ] || die "task $id is in storage and names no file"
+    on_box "test -r '$STORE/$fname'" 2>/dev/null \
+      || die "task $id was moved to $fname, which this account cannot read"
+    # Decompressed on the box: the host has zstd and the container does not.
+    on_box "zstd -dc '$STORE/$fname' 2>/dev/null"
+    return
+  fi
+
+  # Blobs are ordered by offset, because a long log is written in several rows and
+  # reassembling them out of order produces a file that looks almost right.
+  q "select hex(blob_data) from dbfs_data
+     where meta_id = (select id from dbfs_meta where full_path like '%/$id.log.zst')
+     order by blob_offset;" | tr -d '\n' | xxd -r -p
+}
+
+# ── dispatch ────────────────────────────────────────────────────────────────
+[ $# -gt 0 ] || usage
+
+if [ "$1" = "--task" ]; then
+  [ $# -ge 2 ] || usage
+  task_log "$2"
+  exit 0
+fi
+
+[ $# -ge 2 ] || usage
+slug="$1"; run_index="$2"; want_job="${3:-}"
+case "$slug" in */*) ;; *) die "expected <owner>/<repo>, got '$slug'" ;; esac
+owner="${slug%%/*}"; repo="${slug##*/}"
+case "$run_index" in ''|*[!0-9]*) die "run index must be a number, got '$run_index'" ;; esac
+
+# The run is found by the number a person sees, which is `index` and not `id`.
+run_id="$(q "select r.id from action_run r
+             join repository p on p.id = r.repo_id
+             where p.name = '$repo' and p.owner_name = '$owner' and r.\`index\` = $run_index;")"
+[ -n "$run_id" ] || die "no run $run_index in $slug"
+
+# Job order is the order they were made, which is the order a person read them in.
+jobs="$(q "select j.id || '|' || j.name || '|' || j.status from action_run_job j
+           where j.run_id = $run_id order by j.id;")"
+[ -n "$jobs" ] || die "run $run_index of $slug has no jobs"
+
+found=0
+while IFS='|' read -r job_id job_name job_status; do
+  [ -n "${job_id:-}" ] || continue
+  [ -z "$want_job" ] || [ "$job_name" = "$want_job" ] || continue
+  found=1
+  # Several tasks can belong to one job when a job was retried, and the log of each
+  # is worth having, so every one is printed rather than only the last.
+  tasks="$(q "select id || '|' || status from action_task where job_id = $job_id order by id;")"
+  if [ -z "$tasks" ]; then
+    printf '=== %s · job %s · status %s · no task recorded ===\n' "$slug" "$job_name" "$job_status"
+    continue
+  fi
+  while IFS='|' read -r task_id task_status; do
+    [ -n "${task_id:-}" ] || continue
+    printf '=== %s run %s · job %s · status %s · task %s (status %s) ===\n' \
+      "$slug" "$run_index" "$job_name" "$job_status" "$task_id" "$task_status"
+    task_log "$task_id" || say "  (log unavailable for task $task_id)"
+  done <<< "$tasks"
+done <<< "$jobs"
+
+[ "$found" = "1" ] || die "run $run_index of $slug has no job named '$want_job'"
