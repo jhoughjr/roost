@@ -269,6 +269,10 @@ else
   echo "✗ status NOT posted: mirror fetch failed (offline?) — refusing to push over an unverified base; run roost status again" >&2
   exit 1
 fi
+# dokku's own deploy output, kept so the success line can be checked against it.
+DEPLOY_BANNER="$(mktemp "${TMPDIR:-/tmp}/roost-status-banner.XXXXXX")"
+trap 'rm -f "$DEPLOY_BANNER"' EXIT
+
 # Dokku is a deploy SINK, not a source: nothing ever merges back from it and
 # the GitHub mirror is canonical. When an hourly run's mirror push loses a
 # race (e.g. with a PR squash-merge), dokku ends up with a commit GitHub
@@ -283,7 +287,13 @@ fi
 # than discarding a whole cycle for, so the attempts back off and only then give up.
 push_to_dokku() {
   local attempt=1 delay=5
-  until git push --force dokku main; do
+  while :; do
+    # tee keeps the banner on the log and on disk at the same time.
+    # `until` over the pipeline would read tee's status, which is always 0, so a failed push would look like a successful one.
+    git push --force dokku main 2>&1 | tee "$DEPLOY_BANNER"
+    if [ "${PIPESTATUS[0]}" -eq 0 ]; then
+      return 0
+    fi
     if [ "$attempt" -ge 4 ]; then
       echo "✗ deploy push failed 4 times — the site keeps the board it last published" >&2
       return 1
@@ -309,8 +319,23 @@ push_to_dokku || deployed=0
 
 git push origin main 2>/dev/null || echo "note: GitHub mirror push failed (non-fatal)"
 
+# A push that returns 0 is not a site that is served.
+# On 2026-09-07 the status app had its proxy disabled and its domains stripped, so every run deployed to http://opi and nginx served no vhost.
+# The site answered 502 for days while this line reported success on each run.
+# The banner names the hosts dokku served, so the success line is gated on the expected one being among them.
 if [ "$deployed" -eq 1 ]; then
-  echo "✓ status deployed — https://status.${ROOST_DOMAIN}/"
+  expected_host="status.${ROOST_DOMAIN}"
+  if grep -q "$expected_host" "$DEPLOY_BANNER"; then
+    echo "✓ status deployed — https://${expected_host}/"
+  else
+    echo "✗ deployed, but dokku did not serve ${expected_host}: the site keeps answering as it did" >&2
+    echo "  hosts dokku served:" >&2
+    grep -A 5 'Application deployed:' "$DEPLOY_BANNER" \
+      | grep -oE 'https?://[^[:space:]]+' | sed 's/^/    /' >&2
+    # Present only when the app's proxy is off, and it is the usual reason.
+    grep -F 'Nginx support is disabled' "$DEPLOY_BANNER" | sed 's/^/    /' >&2 || true
+    exit 1
+  fi
 else
   echo "✗ status NOT deployed, but the boards are committed and mirrored — the next run retries the deploy" >&2
   exit 1
