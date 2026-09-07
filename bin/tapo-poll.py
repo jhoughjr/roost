@@ -18,6 +18,19 @@ Usage:
   tapo-poll.py --watch     poll forever, every ROOST_TAPO_INTERVAL seconds
   tapo-poll.py --discover  broadcast-discover every Tapo device and print it
                            (works WITHOUT credentials — use it to find IPs)
+  tapo-poll.py --direct    one read straight from the devices, ignoring the HA
+                           mapping, for a one-off at full resolution
+
+Two ways to read a device. The direct path opens a KLAP session on the device
+itself. The HA path reads Home Assistant's state for it, and HA tracks a device
+by its hardware address, so a DHCP lease change never loses it, and one reader
+holds the device's single session. A device named in ROOST_HA_TAPO reads
+through HA, and every other device reads direct. While pulse's fast sample rate
+is armed, every device reads direct, because HA polls on its own clock and a
+dip that lasts seconds is averaged away before HA sees it. When the fast window
+ends, the direct sessions on HA-read devices are dropped so HA gets them back.
+If HA does not answer, the tick falls back to direct for its devices, and the
+entry says so in `src`.
 
 Dependency: python-kasa, which is not stdlib — roost's one exception. It lives
 in a venv at ~/.roost-tapo-venv (created by install-tapo-poll.sh) and this
@@ -30,6 +43,13 @@ Config, via ~/.roostrc KEY=VALUE lines:
   ROOST_TAPO_FLEET     label of the plug powering THIS box (default: opi); its
                        watts land in the cache as `fleetWatts` for node-report
   ROOST_TAPO_INTERVAL  --watch seconds (default 30, matching node-report)
+  ROOST_HA_TAPO        comma list of `label=ha_name` for the devices HA reads.
+                       A plug's name is the base of its HA entities, so
+                       room=room_power reads switch.room_power and
+                       sensor.room_power_voltage. A light's name is its whole
+                       entity id, e.g. ceiling-l=light.ceiling_fixture_l.
+  ROOST_HA_URL         HA base URL (default http://opi.local:8123), with the
+                       token in ~/.ha_token (chmod 600)
   ROOST_TAPO_PARENT    comma list of `child=parent` saying which plug feeds
                        which, e.g. fridge=room,opi=room,induction=room. A child
                        is physically downstream, so the parent's meter ALREADY
@@ -56,6 +76,7 @@ pulse NODE_KEY — absent, the POST is skipped and the cache is still written.
 import json
 import os
 import sys
+import urllib.request
 import time
 import urllib.error
 import urllib.request
@@ -146,7 +167,107 @@ def config():
         # per-device, which is a change worth making only once that's true.
         "bulbW": float(cfg.get("ROOST_TAPO_BULB_W", "8.7") or 8.7),
         "pulse": cfg.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/"),
+        "ha": ha_map(cfg),
+        "haUrl": cfg.get("ROOST_HA_URL", "http://opi.local:8123").rstrip("/"),
+        "haToken": ha_token(cfg),
     }
+
+
+HA_TOKEN_FILE = os.path.expanduser("~/.ha_token")
+
+
+def ha_map(cfg):
+    """label → HA name for the devices HA reads. Empty means every device reads direct."""
+    out = {}
+    for pair in cfg.get("ROOST_HA_TAPO", "").split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            sys.exit(f"tapo-poll: ROOST_HA_TAPO entry {pair!r} is not label=ha_name")
+        label, name = pair.split("=", 1)
+        out[label.strip()] = name.strip()
+    return out
+
+
+def ha_token(cfg):
+    """The HA token, required only when a device reads through HA."""
+    if not ha_map(cfg):
+        return None
+    try:
+        with open(HA_TOKEN_FILE) as f:
+            token = f.read().strip()
+    except OSError:
+        sys.exit(f"tapo-poll: ROOST_HA_TAPO is set and {HA_TOKEN_FILE} is missing (a HA long-lived token, chmod 600)")
+    if not token:
+        sys.exit(f"tapo-poll: {HA_TOKEN_FILE} is empty")
+    return token
+
+
+def ha_states(url, token):
+    """Every HA state in one GET, keyed by entity id. Raises on any failure, and the caller decides what a tick does without HA."""
+    req = urllib.request.Request(f"{url}/api/states", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return {s["entity_id"]: s for s in json.load(r)}
+
+
+def read_ha(label, ip, name, states, bulb_w=8.7):
+    """One device through HA, in the shape read_dev gives, so nothing downstream can tell the paths apart except by `src`."""
+    entry = {"label": label, "ip": ip, "src": "ha"}
+
+    def live(entity_id):
+        s = states.get(entity_id)
+        if s is None or s.get("state") in ("unavailable", "unknown"):
+            return None
+        return s
+
+    if name.startswith("light."):
+        s = live(name)
+        if s is None:
+            entry["err"] = f"ha: {name} unavailable"
+            return entry
+        attrs = s.get("attributes", {})
+        entry["alias"] = attrs.get("friendly_name")
+        entry["on"] = s["state"] == "on"
+        bri = num(attrs.get("brightness"))
+        # HA gives brightness 0–255. The direct path gives 0–100, and the derived wattage is duty cycle × rated draw either way.
+        if bri is not None:
+            entry["brightness"] = round(bri / 255 * 100)
+            entry["derived"] = True
+            entry["watts"] = round(bulb_w * bri / 255 if entry["on"] else 0.0, 2)
+        elif not entry["on"]:
+            entry["derived"] = True
+            entry["watts"] = 0.0
+        return entry
+
+    sw = live(f"switch.{name}")
+    if sw is None:
+        entry["err"] = f"ha: switch.{name} unavailable"
+        return entry
+    entry["alias"] = sw.get("attributes", {}).get("friendly_name")
+    entry["on"] = sw["state"] == "on"
+    # HA reports W, V, A and kWh already, so the rounding is the only arithmetic.
+    for key, suffix, digits in (
+        ("watts", "current_consumption", 2),
+        ("volts", "voltage", 1),
+        ("amps", "current", 3),
+        ("kwhToday", "today_s_consumption", 3),
+        ("kwhMonth", "this_month_s_consumption", 3),
+    ):
+        s = live(f"sensor.{name}_{suffix}")
+        v = num(s["state"]) if s else None
+        if v is not None:
+            entry[key] = round(v, digits)
+    return entry
+
+
+def sample_rate(pulse):
+    """Pulse's sample rate, or None when pulse does not answer. A fast rate means the direct path for every device."""
+    try:
+        with urllib.request.urlopen(f"{pulse}/api/sample-rate", timeout=5) as r:
+            return json.load(r)
+    except Exception:
+        return None
 
 
 def parents(cfg):
@@ -328,15 +449,34 @@ async def close_all(handles):
             h[2] = None
 
 
-async def once(handles, creds, cfg):
+async def once(handles, creds, cfg, direct=False):
     try:
-        return await read_all(handles, creds, cfg)
+        return await read_all(handles, creds, cfg, direct)
     finally:
         await close_all(handles)
 
 
-async def read_all(handles, creds, cfg):
-    devices = list(await asyncio.gather(*(read_dev(h, creds, cfg["bulbW"]) for h in handles)))
+async def read_all(handles, creds, cfg, direct=False):
+    via_ha = {} if direct else cfg.get("ha", {})
+    states, ha_err = None, None
+    if via_ha:
+        try:
+            states = await asyncio.to_thread(ha_states, cfg["haUrl"], cfg["haToken"])
+        except Exception as e:
+            ha_err = f"{type(e).__name__}: {e}"
+
+    async def one(handle):
+        label, ip, _ = handle
+        if label in via_ha and states is not None:
+            return read_ha(label, ip, via_ha[label], states, cfg["bulbW"])
+        entry = await read_dev(handle, creds, cfg["bulbW"])
+        # A tick without HA reads direct rather than blank, and says so, because a reading that is late beats one that is missing.
+        if label in via_ha:
+            entry["src"] = "direct-fallback"
+            entry["haErr"] = ha_err
+        return entry
+
+    devices = list(await asyncio.gather(*(one(h) for h in handles)))
     # fleetWatts becomes a node's wattsW in pulse, which is advertised as a
     # measurement of that box, so a derived figure must never reach it. This is
     # the one place the measured/derived line still bars the way.
@@ -479,7 +619,7 @@ async def discover():
 
 def main():
     args = set(sys.argv[1:])
-    if args - {"--json", "--watch", "--discover"}:
+    if args - {"--json", "--watch", "--discover", "--direct"}:
         sys.exit(__doc__)
     ensure_kasa()
 
@@ -491,15 +631,17 @@ def main():
     creds = Credentials(cfg["email"], cfg["password"])
     handles = [[label, ip, None] for label, ip in cfg["targets"]]
 
+    direct = "--direct" in args
+
     if "--json" in args:
-        print(json.dumps(asyncio.run(once(handles, creds, cfg)), indent=2))
+        print(json.dumps(asyncio.run(once(handles, creds, cfg, direct)), indent=2))
         return
 
     if "--watch" in args:
         asyncio.run(watch(handles, creds, cfg))
         return
 
-    payload = asyncio.run(once(handles, creds, cfg))
+    payload = asyncio.run(once(handles, creds, cfg, direct))
     write_cache(payload)
     print(render(payload))
     print(f"  cache: {CACHE} · {post_pulse(payload, cfg['pulse'])}")
@@ -510,8 +652,19 @@ async def watch(handles, creds, cfg):
     The pulse POST goes to a thread — a slow edge must not delay the next read
     or stall the cache node-report depends on."""
     last = None
+    was_fast = False
     while True:
-        payload = await read_all(handles, creds, cfg)
+        # The fast window: pulse says a person is watching, so every device reads direct at pulse's rate.
+        rate = await asyncio.to_thread(sample_rate, cfg["pulse"]) if cfg.get("ha") else None
+        fast = bool(rate and rate.get("fast") and num(rate.get("seconds")) and rate["seconds"] < cfg["interval"])
+        if was_fast and not fast:
+            # The window closed. Drop the direct sessions on HA-read devices, so HA gets its one session back.
+            await close_all([h for h in handles if h[0] in cfg.get("ha", {})])
+            print("tapo-poll: fast window closed, HA-read devices back to HA", file=sys.stderr, flush=True)
+        elif fast and not was_fast:
+            print(f"tapo-poll: fast window open, every device direct at {rate['seconds']}s", file=sys.stderr, flush=True)
+        was_fast = fast
+        payload = await read_all(handles, creds, cfg, direct=fast)
         write_cache(payload)
         result = await asyncio.to_thread(post_pulse, payload, cfg["pulse"])
         # Log on change only: a healthy loop stays silent, but a POST that
@@ -521,7 +674,7 @@ async def watch(handles, creds, cfg):
         if result != last:
             print(f"tapo-poll: {result}", file=sys.stderr, flush=True)
             last = result
-        await asyncio.sleep(cfg["interval"])
+        await asyncio.sleep(max(2, int(rate["seconds"])) if fast else cfg["interval"])
 
 
 if __name__ == "__main__":
