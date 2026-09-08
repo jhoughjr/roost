@@ -55,7 +55,11 @@ runs:
       run: |
         set -euo pipefail
         install -d -m 700 "$HOME/.ssh"
-        key_file="$HOME/.ssh/swift-ci-forge-key"
+        # SwiftPM clones with libgit2, not the git CLI, and libgit2 knows
+        # nothing of core.sshCommand: it only auto-discovers a default
+        # identity file. id_ed25519 is that name, so both this library path
+        # and a plain git clone find the same key without further wiring.
+        key_file="$HOME/.ssh/id_ed25519"
         printf '%s\n' "$FORGE_TOKEN" > "$key_file"
         chmod 600 "$key_file"
         # SwiftPM clones a dependency twice, once for its cache and once for
