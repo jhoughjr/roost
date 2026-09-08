@@ -10,7 +10,12 @@ log:
 
 runner:
   file: .runner
-  capacity: 1
+  # Two jobs at once. The box has 8 cores and 15 GB, a warm Swift build
+  # takes a few GB, and two repos use two scratch directories. Two runs of
+  # one repo are safe because SwiftPM locks its scratch path and the second
+  # waits. Raised from 1 on 2026-09-08, when every repo on the forge queued
+  # behind one image build.
+  capacity: 2
   timeout: 3h
   fetch_timeout: 5s
   fetch_interval: 2s
