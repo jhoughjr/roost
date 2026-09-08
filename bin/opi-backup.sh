@@ -97,7 +97,19 @@ manifest_add() {
 
 # Dump each running PostgreSQL cluster.
 # A file copy of a live cluster is inconsistent, and it usually does not restore.
-for container in $(docker ps --format '{{.Names}}' | grep -E '^mwstack-pg-' || true); do
+# Every running cluster, found by asking the container rather than by matching a name.
+# The filter used to be '^mwstack-pg-', which was true of every cluster on the box when it
+# was written and silently stopped being true. rookery-pg ran for a day holding the whole
+# work record, on a box that hard-resets, and was not in a single backup: it did not match
+# the name, so the loop never saw it. A backup that covers what somebody remembered to name
+# is a backup nobody can trust the next time something new arrives.
+#
+# pg_isready answers only on a PostgreSQL container, so the test is what the thing is rather
+# than what it is called. A container that does not answer is skipped in silence, because
+# every other container on the box is not a database and saying so twenty times is noise.
+for container in $(docker ps --format '{{.Names}}' | while read -r name; do
+        docker exec "${name}" pg_isready -U postgres >/dev/null 2>&1 && printf '%s\n' "${name}"
+    done); do
     echo "-- pg_dumpall ${container}"
     docker exec "${container}" pg_dumpall -U postgres > "${STAGE}/pg/${container}.sql"
     # A cluster dump is piped into psql, never extracted onto a path.
