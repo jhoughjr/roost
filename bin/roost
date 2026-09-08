@@ -16,6 +16,7 @@
 #   roost ps [app]                               container status
 #   roost logs <app> [-n N]                      tail app logs (default 200)
 #   roost forge-log <owner>/<repo> <run> [job]   read a forge job's log from the forge's own database
+#   roost lan-cert <name> <user@host> <dir> [label]   issue or renew a LAN name's certificate through DNS-01 and place it on the host that serves it
 #   roost restart <app>                          restart an app
 #   roost config <app> [KEY=VAL ...]             show or set app config
 #   roost doctor                                 diagnose the setup
@@ -30,6 +31,7 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   new)    exec "$BIN/new-app.sh" "$@" ;;
   route)  exec "$BIN/publish-route.sh" "$@" ;;
+  lan-cert) exec "$BIN/lan-cert.sh" "$@" ;;
   fleet)  exec "$BIN/fleet-board.py" "$@" ;;
   tapo)   exec "$BIN/tapo-poll.py" "$@" ;;
   ha-scoop) exec "$BIN/ha-scoop.py" "$@" ;;

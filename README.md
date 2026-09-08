@@ -32,6 +32,7 @@ diagnoses the setup when anything misbehaves.
 |---|---|
 | `roost new <name> [--static\|--node\|--swift\|--board]` | nothing → live app in ~40 s |
 | `roost route <subdomain>` | publish a tunnel route via the Cloudflare API |
+| `roost lan-cert <name> <user@host> <dir> [label]` | issue or renew a LAN name's certificate through DNS-01 in the certbot container, and place it on the host that serves it; `bin/install-lan-cert.sh` runs it daily |
 | `roost status ["message"]` | collect + validate + deploy the status site (no message: narrative auto-composed from merged PRs) |
 | `roost stats` | run the configured board-stat collectors |
 | `roost fleet` | refresh the fleet board json |
