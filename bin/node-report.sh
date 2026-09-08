@@ -134,6 +134,9 @@ if [ -n "$PCT" ]; then POWER_JSON="$POWER_JSON,\"batteryPct\":$PCT"; fi
 IOREG=$(ioreg -rn AppleSmartBattery 2>/dev/null || true)
 if [ -n "$IOREG" ]; then
   AMP=$(printf '%s\n' "$IOREG" | awk -F'= ' '/^ *"Amperage" =/{print $2; exit}' | tr -dc '0-9-')
+  # ioreg prints a negative amperage as an unsigned 64-bit number, so a discharge of 232 mA arrives as 18446744073709551384.
+  # Shell arithmetic is signed 64-bit and wraps it back to -232. awk cannot, because a double loses the low bits at that size.
+  [ -n "$AMP" ] && AMP=$(( AMP ))
   VOLT=$(printf '%s\n' "$IOREG" | awk -F'= ' '/^ *"Voltage" =/{print $2; exit}' | tr -dc '0-9')
   # mA × mV → W. Reported even at 0 (a full battery on AC), because "charging
   # at 0 W" and "no battery at all" are different facts downstream.
