@@ -95,9 +95,15 @@ fi
 # installed; when absent the field is omitted and pulse/watts fall back to
 # the idleW/maxW load estimate (shown with a ~ on the roost page).
 WATTS_JSON=""
-for MACMON in "$(command -v macmon || true)" /opt/homebrew/bin/macmon /usr/local/bin/macmon; do
+MACMON_SAMPLE=""
+# $HOME/bin included because install-macmon.sh puts it there: that path needs no root,
+# and a launchd job's PATH does not carry it.
+for MACMON in "$(command -v macmon || true)" "$HOME/bin/macmon" /opt/homebrew/bin/macmon /usr/local/bin/macmon; do
   [ -n "$MACMON" ] && [ -x "$MACMON" ] || continue
-  SYS_W=$("$MACMON" pipe -s 1 2>/dev/null | grep -oE '"sys_power":[0-9.]+' | cut -d: -f2 || true)
+  # One sample, read twice. `pipe -s 1` waits a second to take it, and asking again for
+  # the temperatures would double the time this script spends holding still.
+  MACMON_SAMPLE=$("$MACMON" pipe -s 1 2>/dev/null || true)
+  SYS_W=$(printf '%s' "$MACMON_SAMPLE" | grep -oE '"sys_power":[0-9.]+' | cut -d: -f2 || true)
   [ -n "$SYS_W" ] && WATTS_JSON=",\"wattsW\":$SYS_W,\"wattsSrc\":\"macmon\""
   break
 done
@@ -136,9 +142,45 @@ if [ -n "$IOREG" ]; then
   fi
 fi
 
-# No temperatures from a Mac yet. macmon reads die temperatures beside the
-# system power we already take from it, so this is where they would come from.
+# Temperatures, from the sample macmon already took plus the battery's own sensor.
+#
+# The die figures ride the same reading as the watts above, so they cost nothing extra.
+# A Mac with no macmon sends none, the same way it sends no measured watts, and pulse
+# falls back to what it can estimate rather than being handed a zero.
+#
+# Warn and crit are the throttle margin rather than a failure point: Apple silicon holds
+# its clocks to about 100 C and backs off from there, so 95 is "it is working hard" and
+# 105 is "it is losing the argument". A battery is a different thing with a different
+# limit; above 40 C it ages faster and above 45 it is being harmed, which is why those
+# two numbers are not the die's.
+#
+# A Mac has no fan this script can read, so fanPwm is omitted rather than sent as zero.
 TEMP_JSON=""
+MAC_TEMPS=""
+if [ -n "$MACMON_SAMPLE" ]; then
+  CPU_C=$(printf '%s' "$MACMON_SAMPLE" | grep -oE '"cpu_temp_avg":[0-9.]+' | cut -d: -f2 || true)
+  GPU_C=$(printf '%s' "$MACMON_SAMPLE" | grep -oE '"gpu_temp_avg":[0-9.]+' | cut -d: -f2 || true)
+  if [ -n "$CPU_C" ]; then
+    MAC_TEMPS="{\"n\":\"cpu\",\"kind\":\"cpu\",\"c\":$(awk -v c="$CPU_C" 'BEGIN{printf "%.1f", c}'),\"warnC\":95,\"critC\":105}"
+  fi
+  # A GPU reading of 0.0 is macmon saying it has no figure, not a cold GPU. Sending it
+  # would put a wrong number on the chart, which is worse than a gap the chart can break.
+  if [ -n "$GPU_C" ] && [ "$(awk -v g="$GPU_C" 'BEGIN{print (g > 0.5) ? 1 : 0}')" = "1" ]; then
+    [ -n "$MAC_TEMPS" ] && MAC_TEMPS="$MAC_TEMPS,"
+    MAC_TEMPS="$MAC_TEMPS{\"n\":\"gpu\",\"kind\":\"gpu\",\"c\":$(awk -v g="$GPU_C" 'BEGIN{printf "%.1f", g}'),\"warnC\":95,\"critC\":105}"
+  fi
+fi
+# Hundredths of a degree, so 3010 is 30.1 C. A desktop Mac has no battery and this is
+# simply absent, the same as batteryPct above.
+BATT_RAW=$(ioreg -r -c AppleSmartBattery 2>/dev/null | awk -F'= ' '/"Temperature"/{print $2; exit}' || true)
+case "$BATT_RAW" in
+  ''|*[!0-9]*) ;;
+  *)
+    [ -n "$MAC_TEMPS" ] && MAC_TEMPS="$MAC_TEMPS,"
+    MAC_TEMPS="$MAC_TEMPS{\"n\":\"battery\",\"kind\":\"battery\",\"c\":$(awk -v t="$BATT_RAW" 'BEGIN{printf "%.1f", t/100}'),\"warnC\":40,\"critC\":45}"
+    ;;
+esac
+if [ -n "$MAC_TEMPS" ]; then TEMP_JSON=",\"temps\":[$MAC_TEMPS]"; fi
 
 ;;
 Linux)
