@@ -94,6 +94,41 @@ Compiled artifacts then survive between runs, with nothing in the path that can 
 
 That action was never the right mechanism here. On GitHub it exists because the runner is ephemeral and the cache has to live somewhere else. This runner is a box that stays up, so persisting a directory is the native answer and the action is a workaround for not having one.
 
+## The swift-ci action
+
+`ci/actions/swift-ci/action.yml` is a composite action that carries the two things every Swift workflow on this runner needs: the scratch-path symlink above and, when a job names a private dependency, the credential that reaches it.
+
+Inputs:
+
+| Input | Default | What it is |
+|---|---|---|
+| `repo` | the checkout's own name | The subdirectory of `/swiftcache` this job's build state lives in. |
+| `forge-token` | empty | A deploy key for a private dependency. Empty skips the credential step. |
+| `forge-host` | `forgejo.jimmyhoughjr.net` | The host a private dependency's manifest names. |
+| `dependency-owner` | `jimmy` | The forge owner whose private packages the token opens. |
+
+Every Swift workflow now carries this line, near the top of its steps:
+
+```yaml
+- uses: actions/swift-ci@v1
+  with:
+    forge-token: ${{ secrets.VAULT_KIT_DEPLOY_KEY }}
+```
+
+Drop the `with:` block for a job that resolves no private dependency.
+
+**Mirroring an action authored in this repo is not the migration above.** The others are single-purpose upstream repositories with `action.yml` at the root, so a whole-repository migration lands it there. `swift-ci` lives at `ci/actions/swift-ci` inside roost, and `uses: actions/swift-ci@v1` resolves `action.yml` at the mirror's root, so mirroring the whole of roost would put it three directories too deep. The fix is a subtree split, pushed once and tagged:
+
+```sh
+git subtree split --prefix=ci/actions/swift-ci -b swift-ci-subtree
+git push https://forgejo.jimmyhoughjr.net/actions/swift-ci.git swift-ci-subtree:main
+git tag -f v1 swift-ci-subtree
+git push https://forgejo.jimmyhoughjr.net/actions/swift-ci.git v1 --force
+git branch -D swift-ci-subtree
+```
+
+`actions/swift-ci` is created through the API first, the same way as any other forge repository, because push-to-create is off. Re-run the split and push after a change to the action; `v1` moves rather than gaining a sibling, because every workflow names it and nobody wants a fleet of tags to keep in step.
+
 ## The macOS runner, which has to be built
 
 **Forgejo publishes no macOS runner binary.** Its releases carry linux amd64 and linux arm64 and nothing else, so the mini's runner is built from source:

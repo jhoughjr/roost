@@ -1,0 +1,77 @@
+name: swift-ci
+description: >-
+  Warm scratch for a Swift job on the house runner, and an optional forge
+  credential for a private dependency.
+
+inputs:
+  repo:
+    description: >-
+      The repository name. An empty value falls back to the checkout's own
+      name, read from GITHUB_REPOSITORY.
+    required: false
+    default: ""
+  forge-token:
+    description: >-
+      A deploy key for a private dependency on the forge. An empty value
+      skips the credential step.
+    required: false
+    default: ""
+  forge-host:
+    description: The forge host a private dependency clones from.
+    required: false
+    default: forgejo.jimmyhoughjr.net
+  dependency-owner:
+    description: The forge owner whose private packages the token opens.
+    required: false
+    default: jimmy
+
+runs:
+  using: composite
+  steps:
+    # The runner mounts a persistent directory into every job at /swiftcache.
+    # A symlink here means every default swift command lands its build state
+    # on it, with no --scratch-path flag needed anywhere downstream.
+    - name: link the scratch path
+      shell: bash
+      run: |
+        set -euo pipefail
+        repo="${{ inputs.repo }}"
+        [ -n "$repo" ] || repo="${GITHUB_REPOSITORY##*/}"
+        scratch="/swiftcache/$repo"
+        mkdir -p "$scratch"
+        ln -sfn "$scratch" .build
+        echo "SWIFT_CI_SCRATCH=$scratch" >> "$GITHUB_ENV"
+
+    # A deploy key is an ssh credential, so the rewrite sends the manifest's
+    # plain https URL over ssh for this job only. The manifest stays https,
+    # and only this job's git config carries the key.
+    - name: forge credential
+      if: ${{ inputs.forge-token != '' }}
+      shell: bash
+      env:
+        FORGE_TOKEN: ${{ inputs.forge-token }}
+        FORGE_HOST: ${{ inputs.forge-host }}
+        DEPENDENCY_OWNER: ${{ inputs.dependency-owner }}
+      run: |
+        set -euo pipefail
+        install -d -m 700 "$HOME/.ssh"
+        key_file="$HOME/.ssh/swift-ci-forge-key"
+        printf '%s\n' "$FORGE_TOKEN" > "$key_file"
+        chmod 600 "$key_file"
+        git config --global url."ssh://git@192.168.0.103:2222/${DEPENDENCY_OWNER}/".insteadOf \
+          "https://${FORGE_HOST}/${DEPENDENCY_OWNER}/"
+        git config --global core.sshCommand \
+          "ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+    # This forge keeps no job logs of its own reasoning, so the warm-or-cold
+    # line is the one fact a run always states about the scratch it got.
+    - name: warm or cold
+      shell: bash
+      run: |
+        set -euo pipefail
+        du -sh "$SWIFT_CI_SCRATCH" 2>/dev/null || echo "scratch size: empty"
+        if [ -d "$SWIFT_CI_SCRATCH/debug" ] || [ -d "$SWIFT_CI_SCRATCH/release" ]; then
+          echo "warm: .build/debug or .build/release already existed"
+        else
+          echo "cold: no prior .build/debug or .build/release"
+        fi

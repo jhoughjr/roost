@@ -41,7 +41,9 @@ cache:
   actions_cache_url_override: "http://10.0.0.1:33091"
   # A generated secret changes on every restart, and every restart then invalidates every cache entry.
   # A fixed one keeps the cache across restarts. Replace it with the output of `openssl rand -hex 40` for a new install.
-  secret: "b7b6b4a1f3c2d8e5a9704f1c6d3b8e2a5c9f0d7b4e1a8c3f6d9b2e5a8c1f4d7b0e3a6c9f"
+  # The real value lives only in the running container's config, at /data/config.yaml on opi-forge.
+  # It never goes in git, so a checkout of this file alone gives a runner no working cache secret.
+  secret: "<forge-cache-secret>"
 
 container:
   network: ""
@@ -61,7 +63,35 @@ container:
   # A mounted directory keeps compiled artifacts across runs with nothing in the path to fail. A workflow opts in with `swift build --scratch-path /swiftcache/<repo>`.
   #
   # The trade is that jobs share it, so a workflow picks a subdirectory of its own and nothing collides.
-  options: "--volume /home/jimmy/forge-swift:/swiftcache"
+  #
+  # The docker socket is mounted because MWServer builds images and runs its suite in one. A job
+  # container without it cannot run docker at all, and host mode is no answer: the runner itself
+  # runs in a container that carries the socket and no docker client, so a host-mode job has the
+  # same gap in a different place.
+  #
+  # The trade is real. A job that can reach the host's docker daemon can do anything on the host,
+  # so this suits a forge whose repositories are all ours and would not suit one that takes work
+  # from outside.
+  #
+  # The forge is named inside a job so SwiftPM can resolve dependencies from it, and the name
+  # resolves to Cloudflare from here as it does everywhere else. Pointing it at the docker
+  # gateway keeps the clone on the LAN, and the box holds a certificate for the name, so TLS
+  # still verifies. Without this a dependency clone leaves the network and comes back.
+  #
+  # The cross-compilation SDK is mounted so a job can build amd64 on this arm64 box. The target
+  # is /root/.swiftpm and not a path derived from HOME, because `swift sdk` resolves its search
+  # path from the real user and the job container runs as root. Mounted anywhere else,
+  # `swift sdk list` returns nothing while the mount itself looks correct.
+  # It is read-only because every later run shares the one bundle, so a job cannot corrupt it.
+  options: >-
+    --volume /home/jimmy/forge-swift:/swiftcache
+    --volume /var/run/docker.sock:/var/run/docker.sock
+    --volume /home/jimmy/.swiftpm:/root/.swiftpm:ro
+    --add-host forgejo.jimmyhoughjr.net:10.0.0.1
+  # act_runner refuses a mount that is not named here, so a path added above is added here too.
   valid_volumes:
     - /home/jimmy/forge-swift
+    - /var/run/docker.sock
+    - /home/jimmy/.swiftpm
+    - "**"
   force_pull: false
