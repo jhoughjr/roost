@@ -215,6 +215,47 @@ print(json.dumps({"host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started
   else
     say "  report: pulse did not take the reading"
   fi
+
+  # The events, for the record that outlives the alert channel. A boot that changed since the last pass, and one line per thing this pass did.
+  # A quiet pass posts nothing, so the record holds only what happened.
+  BOOT_FILE="$HOME/.dokku-reconcile.boot"
+  booted="$(uptime -s 2>/dev/null || true)"
+  last_boot="$(cat "$BOOT_FILE" 2>/dev/null || true)"
+  events=$(python3 -c '
+import json, sys, time
+booted, last_boot, started, imageless_names, unserved_names, still, rebuilt = sys.argv[1:8]
+events = []
+def add(kind, tone, message, subject="opi", at=None, detail=None):
+    e = {"kind": kind, "source": "roost", "subject": subject, "tone": tone, "message": message}
+    if at: e["at"] = at
+    if detail: e["detail"] = detail
+    events.append(e)
+if booted and booted != last_boot:
+    try:
+        at = int(time.mktime(time.strptime(booted, "%Y-%m-%d %H:%M:%S")) * 1000)
+    except ValueError:
+        at = None
+    add("boot", "warn", "opi booted at " + booted + (", after a reset nobody asked for" if last_boot else ""), at=at, detail={"bootedAt": booted, "before": last_boot or None})
+if int(started) > 0:
+    add("reconcile", "warn", "started %s app(s) that were deployed and down" % started)
+if imageless_names.split():
+    add("reconcile", "bad", "no image, and the proxy is poisoned until a redeploy: " + " ".join(imageless_names.split()), detail={"apps": imageless_names.split()})
+if still.split():
+    add("reconcile", "bad", "still not served after the proxy rebuild: " + " ".join(still.split()), detail={"apps": still.split()})
+elif unserved_names.split():
+    add("reconcile", "warn", "proxy rebuilt, serving again for " + " ".join(unserved_names.split()), detail={"apps": unserved_names.split()})
+elif rebuilt == "1":
+    add("reconcile", "warn", "rebuilt every vhost")
+print(json.dumps({"events": events}) if events else "")
+' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt")
+  if [ -n "$events" ]; then
+    if curl -sf -m 20 -X POST "$PULSE/api/events" -H "content-type: application/json" -H "@$HDR" --data-binary "$events" > /dev/null; then
+      say "  report: the events are on pulse"
+    else
+      say "  report: pulse did not take the events"
+    fi
+  fi
+  [ -n "$booted" ] && printf '%s\n' "$booted" > "$BOOT_FILE"
   rm -f "$HDR"
 fi
 
