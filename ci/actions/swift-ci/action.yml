@@ -58,6 +58,12 @@ runs:
         key_file="$HOME/.ssh/swift-ci-forge-key"
         printf '%s\n' "$FORGE_TOKEN" > "$key_file"
         chmod 600 "$key_file"
+        # SwiftPM clones a dependency twice, once for its cache and once for
+        # the workspace, close enough together that two ssh processes can
+        # meet an unknown host at once. accept-new resolves a lone first
+        # contact; it does not promise a clean race between two. Scanning
+        # the key once, before either clone starts, removes the race.
+        ssh-keyscan -p 2222 -H 192.168.0.103 >> "$HOME/.ssh/known_hosts" 2>/dev/null
         git config --global url."ssh://git@192.168.0.103:2222/${DEPENDENCY_OWNER}/".insteadOf \
           "https://${FORGE_HOST}/${DEPENDENCY_OWNER}/"
         git config --global core.sshCommand \
