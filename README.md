@@ -57,7 +57,7 @@ secrets live in separate chmod-600 dotfiles (`~/.cf_api_token`,
 | [homeauto](https://github.com/jhoughjr/homeauto) | Smart plugs, bulbs and Home Assistant: wiring, credential locations, rebuild-from-nothing plan (separate repo) |
 | [docs/status-events.md](docs/status-events.md) | Design sketch (future): push-based CI → central ingest → boards + history |
 | [bin/roost](bin/roost) | The dispatcher — every command above |
-| [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify |
+| [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify, and its kind file |
 | [bin/publish-route.sh](bin/publish-route.sh) | Publish a subdomain through the Cloudflare tunnel via API — no dashboard |
 | [bin/status.sh](bin/status.sh) | The `roost status` orchestrator: self-update, collect, validate, deploy |
 | [bin/fleet-board.py](bin/fleet-board.py) / [bin/fleet-alert.py](bin/fleet-alert.py) | Fleet snapshot board + state-transition desktop/ntfy alerts |

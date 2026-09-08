@@ -194,6 +194,27 @@ HTML
     ;;
 esac
 
+echo "==> writing hatchery-kind.json"
+case "$KIND" in
+  static) KIND_SUMMARY="A static site: nginx serving one HTML page." ; KIND_HEALTH="/" ;;
+  node)   KIND_SUMMARY="A Node HTTP server with no dependencies." ; KIND_HEALTH="/health" ;;
+  swift)  KIND_SUMMARY="A Hummingbird service that answers hello and a health check." ; KIND_HEALTH="/health" ;;
+  board)  KIND_SUMMARY="A statusgen status board, served by nginx." ; KIND_HEALTH="/" ;;
+esac
+cat > "$DIR/hatchery-kind.json" <<JSON
+{
+  "kind": "${NAME}",
+  "summary": "${KIND_SUMMARY}",
+  "image": "${NAME}",
+  "port": 80,
+  "healthcheck": "${KIND_HEALTH}",
+  "environment": {},
+  "notes": [
+    "roost's new-app.sh wrote this file, which is the declaration hatchery reads."
+  ]
+}
+JSON
+
 echo "==> first deploy"
 cd "$DIR"
 git init -q -b main
