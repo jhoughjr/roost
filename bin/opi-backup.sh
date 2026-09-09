@@ -119,9 +119,40 @@ done
 # Copy the root-owned trees through a container.
 # The account cannot read them directly, and the container keeps the original ownership.
 # We write a plain tar and not a gzip, because restic must see unchanged content to deduplicate it.
+# How fast the tars are allowed to hit the staging disk.
+#
+# dokku.tar is about 9.7 GB and went down at roughly 160 MB/s, which is a minute of
+# peak write current. The box hard-reset in the middle of that write on 2026-09-07 and
+# again on 2026-09-09, both times at 03:31, and each reset killed the backup that
+# caused it. The supply sits near 100 V against a 120 V nominal, so the draw is what
+# it cannot hold. Spreading the same bytes over four minutes asks for less current at
+# any instant.
+#
+# Set to empty to write at full speed. The cap is applied by docker rather than by a
+# tool on the host, because the tar already runs in a container and nothing new has to
+# be installed to do it this way.
+TAR_WRITE_BPS="${OPI_BACKUP_TAR_BPS:-40mb}"
+stage_device() {
+    # The whole disk, not the partition: docker caps by block device.
+    local part parent
+    part="$(df --output=source "${STAGE}" 2>/dev/null | tail -1)"
+    parent="$(lsblk -no PKNAME "${part}" 2>/dev/null | head -1)"
+    [ -n "${parent}" ] && printf '/dev/%s' "${parent}"
+}
+TAR_LIMIT=()
+if [ -n "${TAR_WRITE_BPS}" ]; then
+    _dev="$(stage_device)"
+    if [ -n "${_dev}" ] && [ -b "${_dev}" ]; then
+        TAR_LIMIT=(--device-write-bps "${_dev}:${TAR_WRITE_BPS}")
+    else
+        warn "could not name the staging device, so the tars write unthrottled"
+    fi
+fi
+
 tar_root() {
     local src="$1" name="$2" target="${3:-$1}" needs_root="${4:-1}"
-    docker run --rm -v "${src}":/src:ro -v "${STAGE}/tar":/out alpine \
+    docker run --rm "${TAR_LIMIT[@]+"${TAR_LIMIT[@]}"}" \
+        -v "${src}":/src:ro -v "${STAGE}/tar":/out alpine \
         tar --numeric-owner -cf "/out/${name}.tar" -C /src . 2>/dev/null || true
     chmod 644 "${STAGE}/tar/${name}.tar" 2>/dev/null || true
     manifest_add "tar/${name}.tar" tar "${src}" "${target}" "${needs_root}" "" ""
