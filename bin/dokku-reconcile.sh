@@ -15,11 +15,14 @@
 # blocked with it: ps:start, proxy:disable and domains:disable all check for the
 # image first and bail. What actually clears it is rebuilding every vhost.
 #
-# So this does three things, in order, and reports:
+# So this does four things, in order, and reports:
 #   1. starts any app dokku believes is deployed but is not running
-#   2. names any app whose image is missing, because that one poisons the proxy
-#      and a person has to redeploy it
+#   2. names any app whose image is missing, because that one poisons the proxy and a person has to redeploy it
 #   3. rebuilds every vhost, which is what unwedges nginx
+#   4. asks each declared app its own health path, and names the one that answers 5xx behind a working vhost
+#
+# The fourth is the one the first three cannot see. nginx answering for a name says the proxy works, not that the app does.
+# The health path comes from hatchery's declaration, so an app starts being asked the moment its kind file names a path.
 #
 # It needs no root: dokku is drivable over ssh as this account.
 #
@@ -452,6 +455,87 @@ else
   say "  proxy: nothing changed since the last pass, left alone"
 fi
 
+# An app whose vhost works can still be broken: nginx answers for the name, and the app behind it does not.
+# The pass above cannot see that, because it asks only whether an answer comes back, and 502 is an answer.
+# That is how the status board served 502 while every inventory on this box called the estate healthy, and a person found it rather than this script.
+#
+# So this pass asks each app the question its declaration wrote down: the health path hatchery publishes from the kind file.
+# It starts nothing and rebuilds nothing. A bad answer behind a working vhost is the app's own fault, and the proxy is not the remedy for it.
+declared_health=$(python3 -c '
+import json, sys
+declared_file, box_ips = sys.argv[1], sys.argv[2]
+here = set(box_ips.split())
+declared = {}
+if declared_file:
+    try:
+        with open(declared_file) as fh:
+            declared = json.load(fh)
+    except (OSError, ValueError):
+        declared = {}
+for stack in declared.get("stacks", []):
+    if stack.get("backend") != "dokku":
+        continue
+    if (stack.get("host") or "").split("@")[-1] not in here:
+        continue
+    for service in stack.get("services", []):
+        name = service.get("name")
+        path = service.get("healthPath")
+        domains = [domain for domain in service.get("domains", []) if domain]
+        # A service that declares no path asks no question, and one with no name cannot be asked.
+        if name and path and domains:
+            print("%s|%s|%s" % (name, path, " ".join(domains)))
+' "$declared_file" \
+  "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
+
+# The code the app gives at its declared path, over the same two ports the serving probe uses.
+probe_health() {
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 6 --resolve "$1:443:127.0.0.1" "https://$1$2" 2>/dev/null </dev/null)
+  if [ -z "$code" ] || [ "$code" = "000" ]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 -H "Host: $1" "http://127.0.0.1$2" 2>/dev/null </dev/null)
+  fi
+  printf '%s' "$code"
+}
+
+unhealthy_names=""
+while IFS='|' read -r app path hosts; do
+  [ -n "${app:-}" ] || continue
+  code=""
+  for host in $hosts; do
+    code=$(probe_health "$host" "$path")
+    # A name nginx holds no vhost for is the pass above's to report, so this one asks the next name instead.
+    if [ -n "$code" ] && [ "$code" != "000" ]; then break; fi
+  done
+  case "$code" in
+    5*)
+      unhealthy_names="$unhealthy_names $app"
+      say "  $app: nginx answers for it, and the app gives $code at $path"
+      ;;
+  esac
+done <<< "$declared_health"
+
+# Said once when it starts, once when it clears, and once every six hours in between.
+# This is the shape the not-serving alert takes, for the same reason: a message every ten minutes is how an alert stream stops being read.
+sick_state="${XDG_STATE_HOME:-$HOME/.local/state}/dokku-reconcile.unhealthy"
+sick_was="$(cat "$sick_state" 2>/dev/null || true)"
+sick_was_at="${sick_was%% *}"
+sick_was_apps=""
+[ "$sick_was" != "$sick_was_at" ] && sick_was_apps="${sick_was#* }"
+case "$sick_was_at" in ''|*[!0-9]*) sick_was_at=0 ;; esac
+sick_now=$(date +%s)
+if [ -n "$unhealthy_names" ]; then
+  # The names, not the timestamp, decide whether this is news.
+  if [ "$sick_was_apps" != "${unhealthy_names# }" ] || [ $((sick_now - sick_was_at)) -ge 21600 ]; then
+    notify "dokku: answering, and not well" \
+      "$(hostname -s): the app behind the vhost fails its own health path:$unhealthy_names. The proxy is fine, so the fault is the app's. Read its log: dokku logs <app> --tail." \
+      high
+    printf '%s %s\n' "$sick_now" "${unhealthy_names# }" > "$sick_state" 2>/dev/null || true
+  fi
+elif [ -n "$sick_was_apps" ]; then
+  say "  health: $sick_was_apps answers its health path again"
+  notify "dokku: healthy again" "$(hostname -s): $sick_was_apps answers its health path again."
+  rm -f "$sick_state"
+fi
+
 declared_up=0 declared_down=""
 while read -r name state; do
   [ -n "${name:-}" ] || continue
@@ -543,6 +627,7 @@ if [ "$jobs_ok" -gt 0 ] || [ -n "$jobs_bad" ]; then
   say "  declared jobs: $jobs_ok ok${jobs_bad:+, not ok:$jobs_bad}"
 fi
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
+[ -z "$unhealthy_names" ] || say "  not healthy:$unhealthy_names"
 
 # Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
 # Non-fatal by contract: no key means no report, and a failed post changes nothing about the exit below.
@@ -618,7 +703,7 @@ print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps":
   last_boot="$(cat "$BOOT_FILE" 2>/dev/null || true)"
   events=$(python3 -c '
 import json, sys, time
-booted, last_boot, started, imageless_names, unserved_names, still, rebuilt, restored_apps, newly_quarantined = sys.argv[1:10]
+booted, last_boot, started, imageless_names, unserved_names, still, rebuilt, restored_apps, newly_quarantined, unhealthy_names = sys.argv[1:11]
 events = []
 def add(kind, tone, message, subject="opi", at=None, detail=None):
     e = {"kind": kind, "source": "roost", "subject": subject, "tone": tone, "message": message}
@@ -647,8 +732,10 @@ elif unserved_names.split():
     add("reconcile", "warn", "proxy rebuilt, serving again for " + " ".join(unserved_names.split()), detail={"apps": unserved_names.split()})
 elif rebuilt == "1":
     add("reconcile", "warn", "rebuilt every vhost")
+if unhealthy_names.split():
+    add("unhealthy", "err", "answering, and failing its own health path: " + " ".join(unhealthy_names.split()), detail={"apps": unhealthy_names.split()})
 print(json.dumps({"events": events}) if events else "")
-' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt" "$restored_apps" "$newly_quarantined")
+' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt" "$restored_apps" "$newly_quarantined" "$unhealthy_names")
   if [ -n "$events" ]; then
     if curl -sf -m 20 -X POST "$PULSE/api/events" -H "content-type: application/json" -H "@$HDR" --data-binary "$events" > /dev/null; then
       say "  report: the events are on pulse"
