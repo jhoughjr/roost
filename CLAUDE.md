@@ -13,7 +13,7 @@ same-named plugin.
   `bin/` opens with a usage/config comment block; the markdown docs
   summarize them and can lag. When they disagree, the header (and the
   code) wins — then fix the doc.
-- `roost help` prints lines 4–18 of `bin/roost` verbatim (via `sed`). If
+- `roost help` prints lines 4–22 of `bin/roost` verbatim (via `sed`). If
   you add a subcommand, add its header line **and** keep the `sed -n`
   range in the `help` case covering it.
 - `~/.roostrc` is plain `KEY=VALUE`, read through **one** reader per
