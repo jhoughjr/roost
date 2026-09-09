@@ -37,8 +37,9 @@ Config, via ~/.roostrc KEY=VALUE lines:
   ROOST_PULSE_URL      pulse base URL (default https://pulse.jimmyhoughjr.net)
 
 Secrets: ~/.ha_token (chmod 600) is a HA long-lived access token, made under
-Profile → Security. ~/.roost_node_key is the pulse NODE_KEY; absent, the POST
-is skipped and --json still works.
+Profile → Security. The pulse NODE_KEY comes from lib/roost_secret.py, which
+reads vault first and the legacy file after it. With no NODE_KEY the POST is
+skipped and --json still works.
 """
 import json
 import os
@@ -64,10 +65,11 @@ except ImportError:
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
+sys.path.insert(0, os.path.join(os.path.dirname(BIN), "lib"))
 import roostlib  # noqa: E402
+from roost_secret import roost_secret  # noqa: E402
 
 TOKEN_FILE = os.path.expanduser("~/.ha_token")
-KEY_FILE = os.path.expanduser("~/.roost_node_key")
 
 
 def config():
@@ -179,10 +181,8 @@ def rows_from_result(result, entities):
 
 
 def post_pulse(rows, pulse):
-    try:
-        with open(KEY_FILE) as f:
-            key = f.read().strip()
-    except OSError:
+    key = roost_secret("NODE_KEY")
+    if not key:
         return "no node key, POST skipped"
     body = json.dumps({"period": "hour", "src": "ha", "rows": rows}).encode()
     req = urllib.request.Request(f"{pulse}/api/tapo/hourly", data=body, method="POST")

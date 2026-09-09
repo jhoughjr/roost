@@ -26,7 +26,8 @@
 #                           want to watch. Per-repo projects are still pushed;
 #                           give this a name none of them use (e.g. `all`).
 #   ROOST_CI_LIVE_ENDPOINT  ci-live base URL (default https://ci.jimmyhoughjr.net)
-# Shared key: ~/.roost_ci_key (chmod 600), must match `dokku config ci-live CI_KEY`.
+# Shared key: CI_KEY, read through lib/roost-secret.sh, and it must match `dokku config ci-live CI_KEY`.
+# `roost secrets` says where this host reads it from.
 #
 # Non-fatal per project: a repo that errors is skipped; the rest still push.
 set -uo pipefail
@@ -46,9 +47,10 @@ RC="$HOME/.roostrc"
 # shellcheck source=/dev/null
 [ -f "$RC" ] && . "$RC"
 
-KEY_FILE="$HOME/.roost_ci_key"
-[ -f "$KEY_FILE" ] || { echo "ci-live-report: missing $KEY_FILE (the ci-live CI_KEY)" >&2; exit 1; }
-KEY=$(cat "$KEY_FILE")
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+# shellcheck source=/dev/null
+. "$LIB/roost-secret.sh"
+KEY="$(roost_secret CI_KEY)" || { echo "ci-live-report: no CI_KEY - run 'roost secrets' to see what this host reads" >&2; exit 1; }
 
 REPOS="${ROOST_CI_LIVE_REPOS:-}"
 [ -n "$REPOS" ] || { echo "ci-live-report: ROOST_CI_LIVE_REPOS not set — nothing to do" >&2; exit 0; }

@@ -36,6 +36,12 @@
 # when. This pass never starts one either.
 set -uo pipefail
 
+# Safe to source: the secret reader reads ~/.roostrc key by key and never sources it, so that file
+# cannot set a variable in this script, and this script decides what gets restarted.
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+# shellcheck source=/dev/null
+. "$LIB/roost-secret.sh"
+
 DOKKU="${DOKKU_TARGET:-dokku@localhost}"
 QUIET="${QUIET:-0}"
 PULSE="${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}"
@@ -535,11 +541,11 @@ fi
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
 
 # Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
-# Non-fatal by contract: no key file means no report, and a failed post changes nothing about the exit below.
+# Non-fatal by contract: no key means no report, and a failed post changes nothing about the exit below.
 # The key travels in a header file and never on a command line.
-KEY_FILE="$HOME/.roost_node_key"
+NODE_KEY="$(roost_secret NODE_KEY || true)"
 PULSE="${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}"
-if [ -f "$KEY_FILE" ]; then
+if [ -n "$NODE_KEY" ]; then
   # The boot time rides along, because a box that reset is a better why than any app-level fact.
   running=$(docker ps --format '{{.Names}}' | grep -E '^[a-zA-Z0-9_.-]+\.[a-z]+\.[0-9]+$' || true)
   reading=$(printf '%s\n' "$vhosts" | python3 -c '
@@ -594,7 +600,7 @@ print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps":
 ' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states")
   HDR=$(mktemp)
   chmod 600 "$HDR"
-  printf 'x-roost-node-key: %s\n' "$(cat "$KEY_FILE")" > "$HDR"
+  printf 'x-roost-node-key: %s\n' "$NODE_KEY" > "$HDR"
   if curl -sf -m 20 -X POST "$PULSE/api/answers" -H "content-type: application/json" -H "@$HDR" --data-binary "$reading" > /dev/null; then
     say "  report: what answers is on pulse"
   else
