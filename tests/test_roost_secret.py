@@ -345,5 +345,48 @@ class PythonMirrorTest(SecretFixture):
         self.assertEqual(VaultDoor.requests, [])
 
 
+class SecretsVerbTest(SecretFixture):
+    """`roost secrets` - the check a person runs after editing the rc, and after deleting a file."""
+
+    def roost(self, *args, extra=None):
+        return subprocess.run(["bash", os.path.join(ROOT, "bin", "roost"), *args],
+                              env=self.env(extra), capture_output=True, text=True, timeout=60)
+
+    def test_a_host_with_neither_arm_says_none(self):
+        r = self.roost("secrets")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "NODE_KEY none\nCI_KEY none\n")
+
+    def test_a_host_still_on_its_files_says_file(self):
+        self.write_legacy("NODE_KEY", FILE_NODE_KEY)
+        self.write_legacy("CI_KEY", FILE_CI_KEY)
+        r = self.roost("secrets")
+        self.assertEqual(r.stdout, "NODE_KEY file\nCI_KEY file\n")
+
+    def test_a_host_on_vault_says_vault(self):
+        self.write_rc(ROOST_VAULT_APP=APP, ROOST_VAULT_APP_KEY=APP_KEY)
+        self.write_curl({"NODE_KEY": VAULT_NODE_KEY, "CI_KEY": "ci-key-from-vault"})
+        r = self.roost("secrets")
+        self.assertEqual(r.stdout, "NODE_KEY vault\nCI_KEY vault\n")
+
+    def test_a_host_mid_cutover_says_both(self):
+        """One name moved and the other did not, which is what a cutover looks like from the box."""
+        self.write_rc(ROOST_VAULT_APP=APP, ROOST_VAULT_APP_KEY=APP_KEY)
+        self.write_curl({"NODE_KEY": VAULT_NODE_KEY})
+        self.write_legacy("CI_KEY", FILE_CI_KEY)
+        self.assertEqual(self.roost("secrets").stdout, "NODE_KEY vault\nCI_KEY file\n")
+
+    def test_no_value_ever_reaches_the_output(self):
+        self.write_rc(ROOST_VAULT_APP=APP, ROOST_VAULT_APP_KEY=APP_KEY)
+        self.write_curl({"NODE_KEY": VAULT_NODE_KEY, "CI_KEY": "ci-key-from-vault"})
+        self.write_legacy("NODE_KEY", FILE_NODE_KEY)
+        r = self.roost("secrets")
+        for value in (VAULT_NODE_KEY, FILE_NODE_KEY, "ci-key-from-vault", APP_KEY):
+            self.assertNotIn(value, r.stdout + r.stderr)
+
+    def test_the_help_names_the_verb(self):
+        self.assertIn("roost secrets", self.roost("help").stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
