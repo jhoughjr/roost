@@ -56,6 +56,14 @@ DECLARED = {
                  ]},
                 {"name": "mwserver-temporal", "kind": "container", "image": "temporalio/temporal:1.8.1",
                  "domains": [], "restart": "unless-stopped", "findings": []},
+                {"name": "dokku-reconcile", "kind": "job", "image": "", "domains": [],
+                 "schedule": "*:0/10", "keepAlive": False, "platform": "linux", "findings": []},
+                {"name": "roost-node-report", "kind": "job", "image": "", "domains": [],
+                 "schedule": "every 30s", "keepAlive": False, "platform": "linux", "findings": []},
+                {"name": "phoenix-runner-watchdog", "kind": "job", "image": "", "domains": [],
+                 "schedule": "every 900s", "keepAlive": False, "platform": "linux", "findings": []},
+                {"name": "roost-status", "kind": "job", "image": "", "domains": [],
+                 "schedule": "every 900s", "keepAlive": False, "platform": "darwin", "findings": []},
             ],
         },
         {
@@ -174,6 +182,19 @@ for arg in "$@"; do
   esac
 done
 exec {real_curl} "$@"
+""")
+        # systemd, as the opi answers about the three jobs the declaration names for this box.
+        # One ran and succeeded, one ran and exited 1, and one has never exited at all.
+        write_stub(self.stub, "systemctl", """
+case "$*" in
+  *dokku-reconcile.service*)
+    printf 'ExecMainStatus=0\\nExecMainExitTimestamp=Wed 2026-09-09 07:20:33 CDT\\n' ;;
+  *roost-node-report.service*)
+    printf 'ExecMainStatus=56\\nExecMainExitTimestamp=Wed 2026-09-09 07:21:03 CDT\\n' ;;
+  *phoenix-runner-watchdog.service*)
+    printf 'ExecMainStatus=0\\nExecMainExitTimestamp=\\n' ;;
+  *) printf 'ExecMainStatus=0\\nExecMainExitTimestamp=\\n' ;;
+esac
 """)
         write_stub(self.stub, "uptime", "printf '2026-09-08 09:00:00\\n'\n")
         write_stub(self.stub, "hostname", "printf '192.168.0.103 10.0.0.1\\n'\n")
@@ -421,6 +442,51 @@ esac
         self.assertIn("rookery-pg/missing_db", rows)
         self.assertEqual(rows["rookery-pg/rookery"]["state"], "unreachable")
         self.assertEqual(rows["rookery-pg/missing_db"]["state"], "unreachable")
+
+    # ── the declared jobs ────────────────────────────────────────────────
+
+    def test_a_job_that_ran_and_succeeded_answers_ok(self):
+        self.run_script()
+        row = self.rows()["dokku-reconcile"]
+        self.assertEqual(row["kind"], "job")
+        self.assertEqual(row["state"], "ok")
+        self.assertEqual(row["exit"], 0)
+        self.assertEqual(row["at"], "Wed 2026-09-09 07:20:33 CDT")
+
+    def test_a_job_that_exited_non_zero_answers_failed_with_the_code(self):
+        self.run_script()
+        row = self.rows()["roost-node-report"]
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(row["exit"], 56)
+        self.assertFalse(row["running"])
+
+    def test_a_job_that_has_never_exited_answers_never_ran(self):
+        self.run_script()
+        row = self.rows()["phoenix-runner-watchdog"]
+        self.assertEqual(row["state"], "never-ran")
+        self.assertEqual(row["at"], "")
+
+    def test_a_job_on_a_mac_is_not_this_box_to_answer_for(self):
+        # roost-status is declared on the mini. The reconcile runs on the opi and answers for Linux.
+        self.run_script()
+        self.assertNotIn("roost-status", self.rows())
+
+    def test_a_job_is_not_reported_as_a_container_the_box_does_not_hold(self):
+        # docker knows nothing about a job, so asking the daemon would report every one as absent.
+        self.run_script()
+        self.assertNotEqual(self.rows()["dokku-reconcile"].get("state"), "absent")
+
+    def test_the_summary_names_the_jobs_that_are_not_ok(self):
+        result = self.run_script()
+        self.assertIn("declared jobs: 1 ok", result.stdout)
+        self.assertIn("roost-node-report(exit 56)", result.stdout)
+        self.assertIn("phoenix-runner-watchdog(never-ran)", result.stdout)
+
+    def test_no_declaration_means_no_job_rows_rather_than_an_error(self):
+        Pulse.declared_status = 503
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("dokku-reconcile", self.rows())
 
 
 if __name__ == "__main__":

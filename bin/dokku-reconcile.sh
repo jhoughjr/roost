@@ -30,6 +30,10 @@
 # pass never touches one. It says whether each is running, stopped or absent,
 # and nothing more, because a container dokku did not make is not dokku's to
 # start and starting one blind would be inventing intent.
+#
+# It answers for the declared jobs on this box the same way. A job runs under systemd rather than
+# under docker, so systemd is asked instead: whether the last run exited zero, what it exited, and
+# when. This pass never starts one either.
 set -uo pipefail
 
 DOKKU="${DOKKU_TARGET:-dokku@localhost}"
@@ -84,12 +88,62 @@ for stack in declared.get("stacks", []):
     if (stack.get("host") or "").split("@")[-1] not in here:
         continue
     for service in stack.get("services", []):
+        # A job runs under systemd and not under docker, so asking the daemon about it would
+        # report every declared job as a container the box does not hold.
+        if service.get("kind") == "job":
+            continue
         name = service.get("name")
         if name:
             print(name, states.get(name, "absent"))
 ' "$declared_file" \
   "$(docker ps -a --format '{{.Names}} {{.State}}' || true)" \
   "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
+
+# The jobs the declaration names for this box, one unit per line.
+#
+# A job is answered for by systemd rather than by docker, and by this box rather than by the Mac
+# that declares it, so the platform decides whose question it is.
+declared_job_units=$(python3 -c '
+import json, sys
+declared_file, box_ips = sys.argv[1], sys.argv[2]
+here = set(box_ips.split())
+declared = {}
+if declared_file:
+    try:
+        with open(declared_file) as fh:
+            declared = json.load(fh)
+    except (OSError, ValueError):
+        declared = {}
+for stack in declared.get("stacks", []):
+    if stack.get("backend") != "host":
+        continue
+    if (stack.get("host") or "").split("@")[-1] not in here:
+        continue
+    for service in stack.get("services", []):
+        if service.get("kind") != "job":
+            continue
+        if (service.get("platform") or "linux") != "linux":
+            continue
+        name = service.get("name")
+        if name:
+            print(name)
+' "$declared_file" "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
+
+# What systemd says about each of them, as `name|exit|when`.
+#
+# The supervisor is the only witness a job has. It answers no address and owns no vhost, so its last
+# exit and the time of it are the whole reading, and a unit systemd has never heard of answers with
+# no timestamp, which reads as never-ran.
+declared_job_states=""
+while read -r unit; do
+  [ -n "${unit:-}" ] || continue
+  shown=$(systemctl --user show "$unit.service" \
+    -p ExecMainStatus -p ExecMainExitTimestamp 2>/dev/null || true)
+  code=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainStatus=//p')
+  when=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainExitTimestamp=//p')
+  declared_job_states="$declared_job_states$unit|${code:-}|${when:-}
+"
+done <<< "$declared_job_units"
 
 # Ask docker what is running, not dokku. `ps:report` costs a round trip per app
 # — six and a half minutes across twenty-three — and asking for every app at
@@ -376,6 +430,21 @@ say "dokku-reconcile: $checked apps, $started started, $imageless with no image,
 if [ "$declared_up" -gt 0 ] || [ -n "$declared_down" ]; then
   say "  declared containers: $declared_up running${declared_down:+, not running:$declared_down}"
 fi
+
+jobs_ok=0 jobs_bad=""
+while IFS='|' read -r unit code when; do
+  [ -n "${unit:-}" ] || continue
+  if [ -n "${code:-}" ] && [ -n "${when:-}" ] && [ "$code" = "0" ]; then
+    jobs_ok=$((jobs_ok + 1))
+  elif [ -n "${code:-}" ] && [ -n "${when:-}" ]; then
+    jobs_bad="$jobs_bad $unit(exit $code)"
+  else
+    jobs_bad="$jobs_bad $unit(never-ran)"
+  fi
+done <<< "$declared_job_states"
+if [ "$jobs_ok" -gt 0 ] || [ -n "$jobs_bad" ]; then
+  say "  declared jobs: $jobs_ok ok${jobs_bad:+, not ok:$jobs_bad}"
+fi
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
 
 # Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
@@ -420,8 +489,28 @@ for line in sys.argv[8].splitlines():
     # running and served depend on the database state.
     apps.append({"name": name, "kind": "database", "state": state, "running": state == "present", "served": state == "present"})
 
+# A declared job carries the app keys too, so the same reader draws it, and the three the
+# supervisor answers: the state, the status the last run exited with, and when that was.
+# ok is a run that exited zero, failed is one that exited anything else, and never-ran is a unit
+# that has not exited at all — which is a new job, or one whose timer never elapsed.
+for line in sys.argv[9].splitlines():
+    parts = line.split("|")
+    if len(parts) != 3 or not parts[0] or parts[0] in seen:
+        continue
+    name, code, when = parts
+    if not code or not when:
+        state = "never-ran"
+    elif code == "0":
+        state = "ok"
+    else:
+        state = "failed"
+    seen.add(name)
+    apps.append({"name": name, "names": [], "kind": "job", "state": state,
+                 "exit": int(code) if code.lstrip("-").isdigit() else None, "at": when,
+                 "served": state == "ok", "running": state == "ok", "image": True})
+
 print(json.dumps({"host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$(cat "$KEY_FILE")" > "$HDR"

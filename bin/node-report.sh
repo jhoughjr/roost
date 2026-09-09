@@ -392,6 +392,80 @@ esac
 # blind spot that queued CI for two days). Boxes with no runner installed send
 # nothing and stay unbadged. NB: `if`, never `[ … ] && …` — a false test under
 # `set -e` would abort before the POST (see the batteryPct note above).
+# The declared jobs on this Mac, as launchd answers for them.
+#
+# The reconcile answers for the opi's jobs and it runs on the opi. Nothing runs on a Mac to answer
+# for its jobs, so this report carries them and pulse then holds every host's.
+# The declaration is cached for an hour: it changes when somebody edits a manifest, and this report
+# runs every thirty seconds.
+JOBS_JSON=""
+if [ "$(uname -s)" = "Darwin" ]; then
+  DECLARED_CACHE="$HOME/.roost-node-declared.json"
+  if [ ! -f "$DECLARED_CACHE" ] || [ -n "$(find "$DECLARED_CACHE" -mmin +60 2>/dev/null || true)" ]; then
+    if curl -sf -m 10 "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
+      mv -f "$DECLARED_CACHE.new" "$DECLARED_CACHE"
+    fi
+    rm -f "$DECLARED_CACHE.new"
+  fi
+
+  # One `label name` line per job the declaration names for this Mac.
+  # The label is what launchd answers to, and the name is what the declaration calls it.
+  JOB_LABELS=$(python3 -c '
+import json, sys
+declared_file, host_names = sys.argv[1], sys.argv[2]
+here = set(name for name in host_names.split() if name)
+try:
+    with open(declared_file) as fh:
+        declared = json.load(fh)
+except (OSError, ValueError):
+    declared = {}
+for stack in declared.get("stacks", []):
+    if stack.get("backend") != "host":
+        continue
+    if (stack.get("host") or "").split("@")[-1] not in here:
+        continue
+    for service in stack.get("services", []):
+        if service.get("kind") != "job" or service.get("platform") != "darwin":
+            continue
+        name = service.get("name")
+        if name:
+            print("net.jimmyhoughjr." + name, name)
+' "$DECLARED_CACHE" \
+    "127.0.0.1 localhost $NAME $(hostname 2>/dev/null || true) $(hostname -s 2>/dev/null || true)" \
+    2>/dev/null || true)
+
+  # launchd keeps the status the last run exited with and no time of it, so `at` is empty on a Mac
+  # and the reading says so rather than inventing one.
+  JOB_ROWS=""
+  while read -r label name; do
+    [ -n "${label:-}" ] || continue
+    printed=$(launchctl print "gui/$(id -u)/$label" 2>/dev/null || true)
+    code=$(printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*last exit code = //p' | head -1)
+    state=$(printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*state = //p' | head -1)
+    JOB_ROWS="$JOB_ROWS$name|${code:-}|${state:-}
+"
+  done <<< "$JOB_LABELS"
+
+  JOBS_JSON=$(printf '%s' "$JOB_ROWS" | python3 -c '
+import json, sys
+rows = []
+for line in sys.stdin.read().splitlines():
+    parts = line.split("|")
+    if len(parts) != 3 or not parts[0]:
+        continue
+    name, code, state = parts
+    if not code.lstrip("-").isdigit():
+        result, exited = "never-ran", None
+    elif code == "0":
+        result, exited = "ok", 0
+    else:
+        result, exited = "failed", int(code)
+    rows.append({"name": name, "kind": "job", "state": result, "exit": exited, "at": "",
+                 "running": state.startswith("running")})
+print(",\"jobs\":" + json.dumps(rows) if rows else "")
+' 2>/dev/null || true)
+fi
+
 RUNNER_JSON=""
 RUNNERS=$(pgrep -f 'Runner\.Listener' 2>/dev/null | wc -l | tr -d ' ') || RUNNERS=0
 RUNNER_INSTALLED=0
@@ -406,5 +480,5 @@ fi
 curl -sf -m 10 -X POST "$PULSE/api/nodes" \
   -H "x-roost-node-key: $KEY" \
   -H "content-type: application/json" \
-  -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON$TEMP_JSON}" \
+  -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON$TEMP_JSON$JOBS_JSON}" \
   > /dev/null
