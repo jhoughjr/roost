@@ -304,15 +304,19 @@ if [ -f "$state" ]; then
   quarantined=$(grep -o "quarantined=[^ ]*" "$state" 2>/dev/null | cut -d= -f2- || true)
 fi
 
+# Track restored and newly quarantined apps for event posting later.
+restored_apps=""
+newly_quarantined=""
 # On every pass, check if any quarantined app's container is now running.
 for app in $quarantined; do
   if docker ps --format '{{.Names}}' | grep -qx "${app}.web.1"; then
     dok proxy:enable "$app" > /dev/null 2>&1
     dok proxy:build-config "$app" > /dev/null 2>&1
     say "  proxy: $app is back, its vhost restored"
-    quarantined="${quarantined// $app / }"
-    quarantined="${quarantined#$app }"
-    quarantined="${quarantined% $app}"
+    restored_apps="$restored_apps $app"
+    quarantined="${quarantined// "$app" / }"
+    quarantined="${quarantined#"$app" }"
+    quarantined="${quarantined% "$app"}"
   fi
 done
 
@@ -355,6 +359,7 @@ if [ "$started" -gt 0 ] || [ "$unserved" -gt 0 ] || [ "$now" != "$was" ]; then
   # Add newly quarantined apps to the list.
   for app in $quarantine_queue; do
     if ! printf ' %s ' "$quarantined" | grep -q " $app "; then
+      newly_quarantined="$newly_quarantined $app"
       quarantined="$quarantined $app"
     fi
   done
@@ -558,7 +563,7 @@ print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps":
   last_boot="$(cat "$BOOT_FILE" 2>/dev/null || true)"
   events=$(python3 -c '
 import json, sys, time
-booted, last_boot, started, imageless_names, unserved_names, still, rebuilt = sys.argv[1:8]
+booted, last_boot, started, imageless_names, unserved_names, still, rebuilt, restored_apps, newly_quarantined = sys.argv[1:10]
 events = []
 def add(kind, tone, message, subject="opi", at=None, detail=None):
     e = {"kind": kind, "source": "roost", "subject": subject, "tone": tone, "message": message}
@@ -575,14 +580,20 @@ if int(started) > 0:
     add("reconcile", "warn", "started %s app(s) that were deployed and down" % started)
 if imageless_names.split():
     add("reconcile", "bad", "no image, and the proxy is poisoned until a redeploy: " + " ".join(imageless_names.split()), detail={"apps": imageless_names.split()})
+# Post quarantine events for newly quarantined apps.
+for app in newly_quarantined.split():
+    add("quarantine", "warn", app + " quarantined, its container has no address", subject=app, detail={"reason": "poisoned upstream"})
+# Post restore events for restored apps.
+for app in restored_apps.split():
+    add("restore", "go", app + " is back, vhost restored", subject=app)
 if still.split():
-    add("reconcile", "bad", "still not served after the proxy rebuild: " + " ".join(still.split()), detail={"apps": still.split()})
+    add("unserved", "err", "still not served after the proxy rebuild: " + " ".join(still.split()), detail={"apps": still.split()})
 elif unserved_names.split():
     add("reconcile", "warn", "proxy rebuilt, serving again for " + " ".join(unserved_names.split()), detail={"apps": unserved_names.split()})
 elif rebuilt == "1":
     add("reconcile", "warn", "rebuilt every vhost")
 print(json.dumps({"events": events}) if events else "")
-' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt")
+' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt" "$restored_apps" "$newly_quarantined")
   if [ -n "$events" ]; then
     if curl -sf -m 20 -X POST "$PULSE/api/events" -H "content-type: application/json" -H "@$HDR" --data-binary "$events" > /dev/null; then
       say "  report: the events are on pulse"
