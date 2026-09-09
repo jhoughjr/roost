@@ -462,10 +462,11 @@ for line in sys.stdin.read().splitlines():
     name, code, state, keep_alive_str = parts
     is_running = state.startswith("running")
     keep_alive = keep_alive_str.lower() in ("true", "1")
-    # When kept alive and running, state is "running" with no exit code.
-    # When kept alive and not running, state is "failed" if there is an exit code, else "never-ran".
-    # Scheduled jobs use exit code to determine result.
-    if keep_alive and is_running:
+    # A pid means running, whatever the declaration says about keepAlive: the two
+    # GitHub runner agents are RunAtLoad without KeepAlive and hold a pid for
+    # days. When not running, state is "failed" if there is an exit code, else
+    # "never-ran". Scheduled jobs use the exit code to determine the result.
+    if is_running and (keep_alive or not code.lstrip("-").isdigit()):
         result, exited = "running", None
     elif not code.lstrip("-").isdigit():
         result, exited = "never-ran", None
