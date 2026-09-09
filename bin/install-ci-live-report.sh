@@ -1,7 +1,8 @@
 #!/bin/bash
 # install-ci-live-report.sh — launchd install for ci-live-report.sh on the mini.
 # Pushes each watched repo's live CI runs to the ci-live app every 20 s. Prereq:
-# ~/.roost_ci_key exists (must match `dokku config ci-live CI_KEY`) and
+# this host can read CI_KEY, through the vault keys in ~/.roostrc or through
+# ~/.roost_ci_key, and it must match `dokku config ci-live CI_KEY` either way.
 # ROOST_CI_LIVE_REPOS/ENDPOINT are set in ~/.roostrc.
 #
 # StartInterval is a fixed 20 s so the poller pushes at least as often as the
@@ -13,7 +14,14 @@ BIN="$(cd "$(dirname "$0")" && pwd)/ci-live-report.sh"
 LABEL="net.jimmyhoughjr.roost-ci-live"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-[ -f "$HOME/.roost_ci_key" ] || { echo "install: create ~/.roost_ci_key first (chmod 600)" >&2; exit 1; }
+# Either door is enough to install. A host that has moved to vault has deleted the file, and a host
+# that has not moved yet has no vault keys, so demanding the file would refuse half the fleet.
+# The rc is read key by key and never sourced, matching lib/roost-secret.sh.
+rc_has() { grep -qs "^$1=." "$HOME/.roostrc"; }
+if [ ! -f "$HOME/.roost_ci_key" ] && ! { rc_has ROOST_VAULT_URL && rc_has ROOST_VAULT_APP && rc_has ROOST_VAULT_APP_KEY; }; then
+  echo "install: no CI_KEY here. Set the three ROOST_VAULT_* keys in ~/.roostrc, or create ~/.roost_ci_key (chmod 600)." >&2
+  exit 1
+fi
 
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF

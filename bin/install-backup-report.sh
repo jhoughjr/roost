@@ -1,7 +1,9 @@
 #!/bin/bash
 # install-backup-report.sh - install backup-report.sh as an hourly service on this
 # box: launchd on macOS, a systemd *user* timer on Linux (a user unit needs no
-# sudo). Prereq: ~/.roost_node_key exists and matches `dokku config pulse NODE_KEY`.
+# sudo). Prereq: this host can read NODE_KEY, through the vault keys in
+# ~/.roostrc or through ~/.roost_node_key. It must match
+# `dokku config pulse NODE_KEY` either way.
 #
 # Install it on a machine that reaches both the service host and the repository
 # host. A machine that sees only one of them pushes a half-unknown reading.
@@ -10,7 +12,14 @@ set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)/backup-report.sh"
 LABEL="net.jimmyhoughjr.roost-backup-report"
 
-[ -f "$HOME/.roost_node_key" ] || { echo "install: create ~/.roost_node_key first (chmod 600)" >&2; exit 1; }
+# Either door is enough to install. A host that has moved to vault has deleted the file, and a host
+# that has not moved yet has no vault keys, so demanding the file would refuse half the fleet.
+# The rc is read key by key and never sourced, matching lib/roost-secret.sh.
+rc_has() { grep -qs "^$1=." "$HOME/.roostrc"; }
+if [ ! -f "$HOME/.roost_node_key" ] && ! { rc_has ROOST_VAULT_URL && rc_has ROOST_VAULT_APP && rc_has ROOST_VAULT_APP_KEY; }; then
+  echo "install: no NODE_KEY here. Set the three ROOST_VAULT_* keys in ~/.roostrc, or create ~/.roost_node_key (chmod 600)." >&2
+  exit 1
+fi
 
 case "$(uname -s)" in
 Darwin)
