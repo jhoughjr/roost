@@ -15,6 +15,7 @@ mentions it, so a container-only inventory reports a healthy estate.
 
 Run:  python3 -m unittest discover -s tests   (from the roost root)
 """
+import copy
 import json
 import os
 import shutil
@@ -39,7 +40,7 @@ DECLARED = {
             "host": "dokku@192.168.0.103", "manifest": "/infra-state/estate/hatchery.json",
             "services": [
                 {"name": "status", "kind": "status", "image": "dokku/status:latest",
-                 "domains": ["status.opi"], "findings": []},
+                 "domains": ["status.opi"], "healthPath": "/", "findings": []},
             ],
         },
         {
@@ -151,7 +152,7 @@ class DokkuReconcileTest(unittest.TestCase):
 
     # ── harness ──────────────────────────────────────────────────────────
 
-    def write_stubs(self, ps_all=PS_ALL):
+    def write_stubs(self, ps_all=PS_ALL, probe_code="200"):
         write_stub(self.stub, "docker", f"""
 case "$*" in
   "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf '%b' {json.dumps(ps_all)} ;;
@@ -180,7 +181,7 @@ exit 0
         write_stub(self.stub, "curl", f"""
 for arg in "$@"; do
   case "$arg" in
-    --resolve|"Host: "*) printf '200'; exit 0 ;;
+    --resolve|"Host: "*) printf '%s' {probe_code!r}; exit 0 ;;
   esac
 done
 exec {real_curl} "$@"
@@ -647,6 +648,59 @@ esac
         unserved_events = [e for e in events_list if e.get("kind") == "unserved"]
         if unserved_events:
             self.assertEqual(unserved_events[0]["tone"], "err")
+
+    # ── the health pass ──────────────────────────────────────────────────
+
+    def test_declared_health_path_that_answers_5xx_is_named(self):
+        # nginx answers for the name, so the serving pass is content. The app behind it is not well.
+        self.write_stubs(probe_code="502")
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("status: nginx answers for it, and the app gives 502 at /", result.stdout)
+        self.assertIn("not healthy: status", result.stdout)
+        # No topic is configured in the test HOME, so the alert says what it would have sent.
+        self.assertIn("dokku: answering, and not well", result.stdout)
+        unhealthy = [event for event in self.events() if event.get("kind") == "unhealthy"]
+        self.assertEqual(len(unhealthy), 1, self.events())
+        self.assertEqual(unhealthy[0]["tone"], "err")
+        self.assertEqual(unhealthy[0]["detail"]["apps"], ["status"])
+
+    def test_an_app_that_answers_its_health_path_raises_nothing(self):
+        self.write_stubs(probe_code="200")
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("not healthy:", result.stdout)
+        self.assertEqual([event for event in self.events() if event.get("kind") == "unhealthy"], [])
+
+    def test_a_service_that_declares_no_path_is_never_asked(self):
+        # This is every estate app before the kind registry: declared, and with no health path to ask about.
+        declared = copy.deepcopy(DECLARED)
+        for stack in declared["stacks"]:
+            for service in stack["services"]:
+                service.pop("healthPath", None)
+        Pulse.declared = declared
+        self.write_stubs(probe_code="502")
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("not healthy:", result.stdout)
+        self.assertEqual([event for event in self.events() if event.get("kind") == "unhealthy"], [])
+
+    def test_the_recovery_is_said_once_when_the_app_answers_again(self):
+        self.write_stubs(probe_code="502")
+        self.assertEqual(self.run_script().returncode, 0)
+
+        Pulse.posts = []
+        self.write_stubs(probe_code="200")
+        result = self.run_script()
+
+        self.assertIn("health: status answers its health path again", result.stdout)
+        self.assertIn("dokku: healthy again", result.stdout)
 
 
 if __name__ == "__main__":
