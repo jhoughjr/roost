@@ -22,13 +22,74 @@
 #   3. rebuilds every vhost, which is what unwedges nginx
 #
 # It needs no root: dokku is drivable over ssh as this account.
+#
+# It also reports what answers for the containers dokku does not own: a
+# dnsmasq, a Postgres cluster, a CI runner. Those are named by hatchery's
+# declaration, read from pulse rather than typed here, so a container declared
+# in the manifest starts being asked about without an edit to this script. This
+# pass never touches one. It says whether each is running, stopped or absent,
+# and nothing more, because a container dokku did not make is not dokku's to
+# start and starting one blind would be inventing intent.
 set -uo pipefail
 
 DOKKU="${DOKKU_TARGET:-dokku@localhost}"
 QUIET="${QUIET:-0}"
+PULSE="${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}"
 
 say() { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 dok() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$DOKKU" "$@" 2>&1; }
+
+# The declaration, cached. pulse is the copy and the manifest is the record, so
+# a pulse that does not answer falls back to the last list this box saw, and a
+# box that has never seen one reports dokku's containers alone.
+DECLARED_CACHE="$HOME/.roost-reconcile-declared.json"
+declared_file=""
+if curl -sf -m 15 "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
+  mv -f "$DECLARED_CACHE.new" "$DECLARED_CACHE"
+  declared_file="$DECLARED_CACHE"
+elif [ -f "$DECLARED_CACHE" ]; then
+  declared_file="$DECLARED_CACHE"
+  say "  declared: pulse did not answer, so the previous run's list is used"
+else
+  say "  declared: pulse did not answer and none is cached, so only dokku's containers are reported"
+fi
+rm -f "$DECLARED_CACHE.new"
+
+# One line of `name state` per container the declaration names for this box.
+# One reader, so the summary line below and the reading posted to pulse cannot
+# disagree about what answered.
+#
+# A name the box does not hold at all is absent, which is a different fault
+# from one that exists and stopped: the first was never made, and the second
+# ran and gave up.
+declared_states=$(python3 -c '
+import json, sys
+declared_file, states_text, box_ips = sys.argv[1], sys.argv[2], sys.argv[3]
+states = dict(
+    (parts[0], parts[1])
+    for parts in (line.split() for line in states_text.splitlines())
+    if len(parts) == 2
+)
+here = set(box_ips.split())
+declared = {}
+if declared_file:
+    try:
+        with open(declared_file) as fh:
+            declared = json.load(fh)
+    except (OSError, ValueError):
+        declared = {}
+for stack in declared.get("stacks", []):
+    if stack.get("backend") != "host":
+        continue
+    if (stack.get("host") or "").split("@")[-1] not in here:
+        continue
+    for service in stack.get("services", []):
+        name = service.get("name")
+        if name:
+            print(name, states.get(name, "absent"))
+' "$declared_file" \
+  "$(docker ps -a --format '{{.Names}} {{.State}}' || true)" \
+  "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
 
 # Ask docker what is running, not dokku. `ps:report` costs a round trip per app
 # — six and a half minutes across twenty-three — and asking for every app at
@@ -183,7 +244,20 @@ else
   say "  proxy: nothing changed since the last pass, left alone"
 fi
 
+declared_up=0 declared_down=""
+while read -r name state; do
+  [ -n "${name:-}" ] || continue
+  if [ "$state" = "running" ]; then
+    declared_up=$((declared_up + 1))
+  else
+    declared_down="$declared_down $name($state)"
+  fi
+done <<< "$declared_states"
+
 say "dokku-reconcile: $checked apps, $started started, $imageless with no image, $unserved not served"
+if [ "$declared_up" -gt 0 ] || [ -n "$declared_down" ]; then
+  say "  declared containers: $declared_up running${declared_down:+, not running:$declared_down}"
+fi
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
 
 # Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
@@ -205,8 +279,21 @@ for line in sys.stdin:
     if not parts:
         continue
     apps.append({"name": parts[0], "names": parts[1:], "served": parts[0] not in still, "running": parts[0] in running, "image": parts[0] not in imageless})
+
+# A declared container carries the same keys as a dokku app so one reader draws
+# both. It owns no vhost, and it is reached through itself, so served follows
+# running; a name the box does not hold has no image under that name either.
+seen = set(app["name"] for app in apps)
+for line in sys.argv[7].splitlines():
+    parts = line.split()
+    if len(parts) != 2 or parts[0] in seen:
+        continue
+    name, state = parts
+    seen.add(name)
+    apps.append({"name": name, "names": [], "served": state == "running", "running": state == "running", "image": state != "absent", "state": state})
+
 print(json.dumps({"host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$(cat "$KEY_FILE")" > "$HDR"
