@@ -409,8 +409,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
     rm -f "$DECLARED_CACHE.new"
   fi
 
-  # One `label name` line per job the declaration names for this Mac.
-  # The label is what launchd answers to, and the name is what the declaration calls it.
+  # One `label name keepAlive` line per job the declaration names for this Mac.
+  # The label is what launchd answers to, the name is what the declaration calls it, and keepAlive is true for jobs that run continuously.
   JOB_LABELS=$(python3 -c '
 import json, sys
 declared_file, host_names, stack_name = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -433,7 +433,8 @@ for stack in declared.get("stacks", []):
         name = service.get("name")
         if name:
             label = service.get("label") or ("net.jimmyhoughjr." + name)
-            print(label, name)
+            keep_alive = service.get("keepAlive", True)
+            print(label, name, keep_alive)
 ' "$DECLARED_CACHE" \
     "127.0.0.1 localhost $NAME $(hostname 2>/dev/null || true) $(hostname -s 2>/dev/null || true)" \
     "${ROOST_STACK:-}" \
@@ -442,12 +443,12 @@ for stack in declared.get("stacks", []):
   # launchd keeps the status the last run exited with and no time of it, so `at` is empty on a Mac
   # and the reading says so rather than inventing one.
   JOB_ROWS=""
-  while read -r label name; do
+  while read -r label name keep_alive; do
     [ -n "${label:-}" ] || continue
     printed=$(launchctl print "gui/$(id -u)/$label" 2>/dev/null || true)
     code=$(printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*last exit code = //p' | head -1)
     state=$(printf '%s\n' "$printed" | sed -n 's/^[[:space:]]*state = //p' | head -1)
-    JOB_ROWS="$JOB_ROWS$name|${code:-}|${state:-}
+    JOB_ROWS="$JOB_ROWS$name|${code:-}|${state:-}|${keep_alive:-True}
 "
   done <<< "$JOB_LABELS"
 
@@ -456,17 +457,24 @@ import json, sys
 rows = []
 for line in sys.stdin.read().splitlines():
     parts = line.split("|")
-    if len(parts) != 3 or not parts[0]:
+    if len(parts) != 4 or not parts[0]:
         continue
-    name, code, state = parts
-    if not code.lstrip("-").isdigit():
+    name, code, state, keep_alive_str = parts
+    is_running = state.startswith("running")
+    keep_alive = keep_alive_str.lower() in ("true", "1")
+    # When kept alive and running, state is "running" with no exit code.
+    # When kept alive and not running, state is "failed" if there is an exit code, else "never-ran".
+    # Scheduled jobs use exit code to determine result.
+    if keep_alive and is_running:
+        result, exited = "running", None
+    elif not code.lstrip("-").isdigit():
         result, exited = "never-ran", None
     elif code == "0":
         result, exited = "ok", 0
     else:
         result, exited = "failed", int(code)
     rows.append({"name": name, "kind": "job", "state": result, "exit": exited, "at": "",
-                 "running": state.startswith("running")})
+                 "running": is_running})
 print(",\"jobs\":" + json.dumps(rows) if rows else "")
 ' 2>/dev/null || true)
 fi
