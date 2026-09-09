@@ -5,6 +5,16 @@ ROOST_DOMAIN=yourdomain.net
 ROOST_METRIC_APP=someapp
 # your statusgen site checkout (for `roost status` / `roost fleet`)
 ROOST_STATUS_SITE=$HOME/status-site
+
+# secrets from vault: the pulse NODE_KEY and the ci-live CI_KEY. One app per
+# host, named roost-<node name>, because a node key belongs to one host and
+# revoking one must not touch the others. The app key is the only secret this
+# host still holds; everything else comes out of the sealed document. Leave all
+# three unset and the reporters keep reading the legacy files. `roost secrets`
+# says which arm answers here. See the README, "Secrets from vault".
+# ROOST_VAULT_URL=https://vault.jimmyhoughjr.net
+# ROOST_VAULT_APP=roost-my-macbook
+# ROOST_VAULT_APP_KEY=paste-the-app-key-here
 # board-stat collectors + history/renderer for `roost status` — optional
 # ROOST_STATUSGEN=$HOME/repos/statusgen
 # ROOST_DOCS=$HOME/repos/docs   # usage-report.py for the Claude usage ledger
@@ -35,8 +45,8 @@ ROOST_STATUS_SITE=$HOME/status-site
 # watches, owner/repo:project:intervalSec[:Label], and the app's base URL. Label
 # is what the console prints; match it to the label in ROOST_CI_REPOS or the
 # same repo gets two names depending on whether its run has finished.
-# The shared POST key lives in ~/.roost_ci_key (chmod 600), matching
-# `dokku config ci-live CI_KEY`.
+# The shared POST key is CI_KEY, read through the vault keys above, and it must
+# match `dokku config ci-live CI_KEY`.
 # ROOST_CI_LIVE_REPOS=Austin-MacWorks/Phoenix-Electron:phoenix:30:Phoenix
 # ROOST_CI_LIVE_ENDPOINT=https://ci.jimmyhoughjr.net
 # One extra project carrying every repo's live runs merged, newest first. A
@@ -70,7 +80,8 @@ ROOST_STATUS_SITE=$HOME/status-site
 # fleet-alert ntfy.sh phone notifications — optional; skip if unset
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
 
-# node-report (per-node telemetry → pulse /api/nodes; key in ~/.roost_node_key)
+# node-report (per-node telemetry → pulse /api/nodes; key is NODE_KEY, read
+# through the vault keys above)
 # macOS and Linux. Measured watts come from macmon (Apple silicon) or, on Linux,
 # a Tapo plug via tapo-poll (below); idle/max are the fallback model only.
 # ROOST_NODE_NAME=my-macbook               # default: ComputerName / hostname

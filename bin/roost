@@ -19,6 +19,7 @@
 #   roost lan-cert <name> <user@host> <dir> [label]   issue or renew a LAN name's certificate through DNS-01 and place it on the host that serves it
 #   roost restart <app>                          restart an app
 #   roost config <app> [KEY=VAL ...]             show or set app config
+#   roost secrets                                where this host reads each secret: vault, file or nowhere
 #   roost doctor                                 diagnose the setup
 #   roost ui                                     full-screen terminal (console, monitor, config, docs, backups tabs)
 set -euo pipefail
@@ -108,6 +109,15 @@ case "$cmd" in
     exit 64
     ;;
   ui)     exec python3 "$BIN/roost-ui.py" "$@" ;;
+  secrets)
+    # The check a person runs after putting the vault keys in ~/.roostrc, and again after deleting
+    # a legacy file. It names the arm that answers and never the value, so it is safe to paste.
+    # shellcheck source=/dev/null
+    . "$BIN/../lib/roost-secret.sh"
+    for name in NODE_KEY CI_KEY; do
+      printf '%s %s\n' "$name" "$(roost_secret_source "$name")"
+    done
+    ;;
   doctor)
     fail=0
     say() { printf "%-38s %s\n" "$1" "$2"; }
@@ -153,7 +163,7 @@ case "$cmd" in
       "  _|_" \
       "═════════"
     echo
-    sed -n '4,21p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,22p' "$0" | sed 's/^# \{0,1\}//'
     echo
     echo "  anything else dispatches to roost-<cmd> (PATH, then \$ROOST_STATUSGEN/bin)"
     ;;

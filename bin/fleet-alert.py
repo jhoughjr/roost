@@ -15,7 +15,9 @@ COLLAPSE_AT = 3
 WARN_PCT = 85
 
 sys.path.insert(0, BIN)
+sys.path.insert(0, os.path.join(os.path.dirname(BIN), "lib"))
 import roostlib  # noqa: E402
+from roost_secret import roost_secret  # noqa: E402
 
 load_config = roostlib.read_rc
 
@@ -61,9 +63,7 @@ def record_event(config, title, msg, kind="alert", subject=None):
     recorder is unreachable is worse than one that forgets.
     """
     try:
-        key_file = os.path.expanduser("~/.roost_node_key")
-        with open(key_file) as fh:
-            key = fh.read().strip()
+        key = roost_secret("NODE_KEY")
         if not key:
             return
         pulse = config.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/")

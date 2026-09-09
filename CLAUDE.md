@@ -23,8 +23,15 @@ same-named plugin.
   Precedence is rc → environment → default. Keep `roostrc.example` in
   sync with what code actually reads — grep `ROOST_` across `bin/` *and* `statusgen/bin/` (several
   example keys are consumed by statusgen collectors, not roost).
-- Secrets are never in `.roostrc`: `~/.cf_api_token`, `~/.roost_node_key`,
-  `~/.roost_ci_key`, `~/.eia_api_key` (all chmod 600).
+- One secret lives in `.roostrc`: `ROOST_VAULT_APP_KEY`, the app key that
+  opens this host's sealed vault document. It is the only secret a host
+  holds. The pulse `NODE_KEY` and the ci-live `CI_KEY` come out of that
+  document through `lib/roost-secret.sh` and `lib/roost_secret.py`, and
+  `~/.roost_node_key` and `~/.roost_ci_key` are the fallback until
+  `roost secrets` says `vault` on that host. Delete a key file only after
+  it does. See the README, "Secrets from vault".
+- Every other secret is still its own chmod-600 file, never in `.roostrc`:
+  `~/.cf_api_token`, `~/.eia_api_key`, `~/.ha_token`, `~/.tapo_pass`.
 
 ## Three-repo contract
 

@@ -47,10 +47,17 @@ README = os.path.join(ROOT, "README.md")
 
 
 sys.path.insert(0, BIN)
+sys.path.insert(0, os.path.join(ROOT, "lib"))
 import roostlib  # noqa: E402  (needs BIN on sys.path when loaded by file path)
+import roost_secret  # noqa: E402  (needs lib/ on sys.path, the same way)
 
 read_rc = roostlib.read_rc
 RC = read_rc()
+
+# Where each secret comes from, held per process. The window matches the document cache in
+# lib/roost_secret.py, so the config tab tells the same story `roost secrets` does.
+SECRET_ROWS = {}
+SECRET_ROW_TTL = 300
 DOKKU = roostlib.rc("ROOST_DOKKU_HOST")
 DOMAIN = roostlib.rc("ROOST_DOMAIN")
 PULSE = roostlib.rc("ROOST_PULSE_URL")
@@ -1063,6 +1070,38 @@ class UI:
             L.append(("d", "enter confirm · esc cancel"))
         return L
 
+    def secret_row(self, label, name):
+        """One config row naming where a secret comes from on this machine, and never its value.
+
+        A secret still read from its legacy file also carries that file's mode, because a key
+        another account can read is the failure this row exists to catch.
+        The reading is held for the document's own window: the config tab redraws on every key,
+        and a vault that is not answering costs the fetch timeout on each of those redraws.
+        """
+        held = SECRET_ROWS.get(name)
+        if held and time.time() - held[0] < SECRET_ROW_TTL:
+            return held[1]
+        row = self.read_secret_row(label, name)
+        SECRET_ROWS[name] = (time.time(), row)
+        return row
+
+    def read_secret_row(self, label, name):
+        """The row `secret_row` holds: one reading of where this machine gets `name`."""
+        source = roost_secret.roost_secret_source(name)
+        if source == "vault":
+            return ("k", f"  {label:<12} vault")
+        if source == "none":
+            return ("s", f"  {label:<12} nowhere"
+                         " (this machine does not report with it)")
+        path = os.path.expanduser(roost_secret.LEGACY_FILES[name])
+        try:
+            mode = oct(stat.S_IMODE(os.stat(path).st_mode))[-3:]
+        except OSError:
+            return ("e", f"  {label:<12} file {path}")
+        note = "" if mode == "600" else "  ← should be 600"
+        return ("k" if mode == "600" else "e",
+                f"  {label:<12} file {path} (mode {mode}){note}")
+
     def config_lines(self):
         L = []
         rc_path = os.path.expanduser("~/.roostrc")
@@ -1088,15 +1127,9 @@ class UI:
         L.append(("k", f"  dokku host   {DOKKU}"))
         L.append(("k", f"  domain       {DOMAIN}"))
         L.append(("k", f"  pulse        {PULSE}"))
-        key_path = os.path.expanduser("~/.roost_node_key")
-        try:
-            mode = oct(stat.S_IMODE(os.stat(key_path).st_mode))[-3:]
-            note = "" if mode == "600" else "  ← should be 600"
-            L.append(("k" if mode == "600" else "e",
-                      f"  node key     {key_path} (mode {mode}){note}"))
-        except OSError:
-            L.append(("s", f"  node key     {key_path} missing"
-                           " (node reporting disabled on this machine)"))
+        # The same reading `roost secrets` prints, and never the value itself.
+        for label, name in (("node key", "NODE_KEY"), ("ci key", "CI_KEY")):
+            L.append(self.secret_row(label, name))
         L.append(("", ""))
         names = self.app_names()
         mode_hint = "m reveal" if self.cfg_masked else "m mask"

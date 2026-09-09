@@ -70,8 +70,9 @@ Config, via ~/.roostrc KEY=VALUE lines:
   ROOST_PULSE_URL      pulse base URL (default https://pulse.jimmyhoughjr.net)
 
 Secrets: ~/.tapo_pass (chmod 600) holds the TP-Link account password; trailing
-whitespace is stripped, so a trailing newline is fine. ~/.roost_node_key is the
-pulse NODE_KEY — absent, the POST is skipped and the cache is still written.
+whitespace is stripped, so a trailing newline is fine. The pulse NODE_KEY comes
+from lib/roost_secret.py, which reads vault first and the legacy file after it.
+With no NODE_KEY the POST is skipped and the cache is still written.
 """
 import json
 import os
@@ -117,11 +118,12 @@ def ensure_kasa():
 
 BIN = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BIN)
+sys.path.insert(0, os.path.join(os.path.dirname(BIN), "lib"))
 import roostlib  # noqa: E402
+from roost_secret import roost_secret  # noqa: E402
 
 CACHE = os.path.expanduser("~/.roost-tapo.json")
 PASS_FILE = os.path.expanduser("~/.tapo_pass")
-KEY_FILE = os.path.expanduser("~/.roost_node_key")
 
 
 def config():
@@ -534,10 +536,8 @@ def write_cache(payload):
 
 
 def post_pulse(payload, pulse):
-    try:
-        with open(KEY_FILE) as f:
-            key = f.read().strip()
-    except OSError:
+    key = roost_secret("NODE_KEY")
+    if not key:
         return "no node key, POST skipped"
     body = json.dumps(payload).encode()
     req = urllib.request.Request(f"{pulse}/api/tapo", data=body, method="POST")

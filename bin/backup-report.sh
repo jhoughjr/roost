@@ -15,15 +15,16 @@
 #   ROOST_PULSE_URL    pulse base URL (default: https://pulse.jimmyhoughjr.net)
 #   ROOST_BACKUP_*     the hosts and paths, see backup-status.py
 #
-# Shared key: ~/.roost_node_key (chmod 600), must match `dokku config pulse NODE_KEY`.
+# Shared key: NODE_KEY, read through lib/roost-secret.sh, and it must match `dokku config pulse NODE_KEY`.
+# `roost secrets` says where this host reads it from.
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=/dev/null
 . "$BIN/roost-env.sh"
+# shellcheck source=/dev/null
+. "$BIN/../lib/roost-secret.sh"
 
-KEY_FILE="$HOME/.roost_node_key"
-[ -f "$KEY_FILE" ] || { echo "backup-report: missing $KEY_FILE (the pulse NODE_KEY)" >&2; exit 1; }
-KEY="$(tr -d '\r\n' < "$KEY_FILE")"
+KEY="$(roost_secret NODE_KEY)" || { echo "backup-report: no NODE_KEY - run 'roost secrets' to see what this host reads" >&2; exit 1; }
 PULSE=${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}
 
 # backup-status.py exits non-zero on a red reading, and a red reading is the one

@@ -40,16 +40,18 @@
 # the plug reads the wall and so includes PSU loss and anything else on that
 # outlet — and labelling a plug reading "macmon" would be a plain untruth.
 #
-# Shared key: ~/.roost_node_key (chmod 600), must match `dokku config pulse NODE_KEY`.
+# Shared key: NODE_KEY, read through lib/roost-secret.sh, and it must match `dokku config pulse NODE_KEY`.
+# `roost secrets` says where this host reads it from.
 set -euo pipefail
 
 RC="$HOME/.roostrc"
 # shellcheck source=/dev/null
 [ -f "$RC" ] && . "$RC"
 
-KEY_FILE="$HOME/.roost_node_key"
-[ -f "$KEY_FILE" ] || { echo "node-report: missing $KEY_FILE (the pulse NODE_KEY)" >&2; exit 1; }
-KEY=$(cat "$KEY_FILE")
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+# shellcheck source=/dev/null
+. "$LIB/roost-secret.sh"
+KEY="$(roost_secret NODE_KEY)" || { echo "node-report: no NODE_KEY - run 'roost secrets' to see what this host reads" >&2; exit 1; }
 
 IDLE_W=${ROOST_NODE_IDLE_W:-5}
 MAX_W=${ROOST_NODE_MAX_W:-40}

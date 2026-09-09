@@ -1,14 +1,22 @@
 #!/bin/bash
 # install-node-report.sh — install node-report.sh as a 30 s service on this box:
 # launchd on macOS, a systemd *user* timer on Linux (opi has no sudo for the
-# runner user, and a user unit needs none). Prereq: ~/.roost_node_key exists
-# (copy it from the workstation; it must match `dokku config pulse NODE_KEY`).
+# runner user, and a user unit needs none). Prereq: this host can read NODE_KEY,
+# through the vault keys in ~/.roostrc or through ~/.roost_node_key. It must
+# match `dokku config pulse NODE_KEY` either way.
 set -euo pipefail
 
 BIN="$(cd "$(dirname "$0")" && pwd)/node-report.sh"
 LABEL="net.jimmyhoughjr.roost-node-report"
 
-[ -f "$HOME/.roost_node_key" ] || { echo "install: create ~/.roost_node_key first (chmod 600)" >&2; exit 1; }
+# Either door is enough to install. A host that has moved to vault has deleted the file, and a host
+# that has not moved yet has no vault keys, so demanding the file would refuse half the fleet.
+# The rc is read key by key and never sourced, matching lib/roost-secret.sh.
+rc_has() { grep -qs "^$1=." "$HOME/.roostrc"; }
+if [ ! -f "$HOME/.roost_node_key" ] && ! { rc_has ROOST_VAULT_URL && rc_has ROOST_VAULT_APP && rc_has ROOST_VAULT_APP_KEY; }; then
+  echo "install: no NODE_KEY here. Set the three ROOST_VAULT_* keys in ~/.roostrc, or create ~/.roost_node_key (chmod 600)." >&2
+  exit 1
+fi
 
 case "$(uname -s)" in
 Darwin)
