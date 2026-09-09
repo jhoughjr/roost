@@ -126,7 +126,7 @@ case "$*" in
   *roost-ha-scoop*)
     printf '\\tstate = not running\\n\\tlast exit code = 1\\n' ;;
   *hatchery-serve*)
-    printf 'Could not find service\\n'; exit 113 ;;
+    printf '\\tstate = running\\n' ;;
   *) exit 113 ;;
 esac
 """)
@@ -165,11 +165,30 @@ esac
         self.assertEqual(row["state"], "failed")
         self.assertEqual(row["exit"], 1)
 
-    def test_a_job_launchd_is_not_holding_answers_never_ran(self):
+    def test_a_kept_alive_job_that_is_running_answers_running(self):
         self.run_script()
         row = self.jobs()["hatchery-serve"]
-        self.assertEqual(row["state"], "never-ran")
+        self.assertEqual(row["state"], "running")
         self.assertIsNone(row["exit"])
+        self.assertTrue(row["running"])
+
+    def test_a_kept_alive_job_that_crashed_with_exit_code_answers_failed(self):
+        # Override the launchctl stub to show hatchery-serve as stopped with a non-zero exit code.
+        write_stub(self.stub, "launchctl", """
+case "$*" in
+  *roost-node-report*)
+    printf '\\tstate = not running\\n\\tlast exit code = 0\\n' ;;
+  *roost-ha-scoop*)
+    printf '\\tstate = not running\\n\\tlast exit code = 1\\n' ;;
+  *hatchery-serve*)
+    printf '\\tstate = not running\\n\\tlast exit code = 1\\n' ;;
+  *) exit 113 ;;
+esac
+""")
+        self.run_script()
+        row = self.jobs()["hatchery-serve"]
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(row["exit"], 1)
 
     def test_launchd_keeps_no_time_of_the_last_run_and_the_row_says_so(self):
         self.run_script()
@@ -225,11 +244,11 @@ exit 22
             "ROOST_NODE_NAME": "laptop",
             "ROOST_STACK": "air",
         })
-        # Stub launchctl to answer for the air jobs.
+        # Stub launchctl to answer for the air jobs (both scheduled).
         write_stub(self.stub, "launchctl", """
 case "$*" in
   *battery-alarm*)
-    printf '\\tstate = running\\n\\tlast exit code = 0\\n' ;;
+    printf '\\tstate = not running\\n\\tlast exit code = 0\\n' ;;
   *roms-catalog*)
     printf '\\tstate = not running\\n\\tlast exit code = 0\\n' ;;
   *) exit 113 ;;
