@@ -15,6 +15,7 @@
 #   ROOST_NODE_IDLE_W  idle watts (default: 5  — Apple-silicon Mac mini/laptop)
 #   ROOST_NODE_MAX_W   full-tilt watts (default: 40 — M-series mini under load)
 #   ROOST_PULSE_URL    pulse base URL (default: https://pulse.jimmyhoughjr.net)
+#   ROOST_STACK        the name of this machine's host stack in the estate declaration
 #
 # Measured watts (`wattsW`) beat the idleW/maxW model whenever a source exists:
 # macmon on Apple silicon, and on Linux a Tapo smart plug via tapo-poll.py's
@@ -412,7 +413,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
   # The label is what launchd answers to, and the name is what the declaration calls it.
   JOB_LABELS=$(python3 -c '
 import json, sys
-declared_file, host_names = sys.argv[1], sys.argv[2]
+declared_file, host_names, stack_name = sys.argv[1], sys.argv[2], sys.argv[3]
 here = set(name for name in host_names.split() if name)
 try:
     with open(declared_file) as fh:
@@ -422,16 +423,20 @@ except (OSError, ValueError):
 for stack in declared.get("stacks", []):
     if stack.get("backend") != "host":
         continue
-    if (stack.get("host") or "").split("@")[-1] not in here:
+    # Match when stack name equals ROOST_STACK, or when host matches here (when ROOST_STACK unset).
+    stack_matches = (stack_name and stack.get("name") == stack_name) or (not stack_name and (stack.get("host") or "").split("@")[-1] in here)
+    if not stack_matches:
         continue
     for service in stack.get("services", []):
         if service.get("kind") != "job" or service.get("platform") != "darwin":
             continue
         name = service.get("name")
         if name:
-            print("net.jimmyhoughjr." + name, name)
+            label = service.get("label") or ("net.jimmyhoughjr." + name)
+            print(label, name)
 ' "$DECLARED_CACHE" \
     "127.0.0.1 localhost $NAME $(hostname 2>/dev/null || true) $(hostname -s 2>/dev/null || true)" \
+    "${ROOST_STACK:-}" \
     2>/dev/null || true)
 
   # launchd keeps the status the last run exited with and no time of it, so `at` is empty on a Mac

@@ -52,6 +52,18 @@ DECLARED = {
                  "schedule": "*:0/10", "keepAlive": False, "platform": "linux", "findings": []},
             ],
         },
+        {
+            "name": "air", "backend": "host", "environment": "prod",
+            "host": "jimmy@local", "manifest": "/infra-state/estate/hatchery.json",
+            "services": [
+                {"name": "battery-alarm", "kind": "job", "image": "", "domains": [],
+                 "schedule": "*:*:0,30", "keepAlive": False, "platform": "darwin",
+                 "label": "com.jimmy.battery-alarm", "findings": []},
+                {"name": "roms-catalog", "kind": "job", "image": "", "domains": [],
+                 "schedule": "0 *", "keepAlive": False, "platform": "darwin",
+                 "findings": []},
+            ],
+        },
     ],
 }
 
@@ -187,6 +199,50 @@ exit 22
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("jobs", self.reading())
         self.assertIn("name", self.reading())
+
+    def test_roost_stack_matches_jobs_by_stack_name(self):
+        env = dict(os.environ)
+        env.update({
+            "HOME": self.home,
+            "PATH": self.stub + os.pathsep + env["PATH"],
+            "ROOST_PULSE_URL": "http://127.0.0.1:1",
+            "ROOST_NODE_NAME": "laptop",
+            "ROOST_STACK": "air",
+        })
+        result = subprocess.run(
+            ["bash", SCRIPT], env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        jobs = {row["name"]: row for row in self.reading().get("jobs", [])}
+        self.assertIn("battery-alarm", jobs)
+        self.assertIn("roms-catalog", jobs)
+
+    def test_declared_label_overrides_built_label(self):
+        env = dict(os.environ)
+        env.update({
+            "HOME": self.home,
+            "PATH": self.stub + os.pathsep + env["PATH"],
+            "ROOST_PULSE_URL": "http://127.0.0.1:1",
+            "ROOST_NODE_NAME": "laptop",
+            "ROOST_STACK": "air",
+        })
+        # Stub launchctl to answer for the air jobs.
+        write_stub(self.stub, "launchctl", """
+case "$*" in
+  *battery-alarm*)
+    printf '\\tstate = running\\n\\tlast exit code = 0\\n' ;;
+  *roms-catalog*)
+    printf '\\tstate = not running\\n\\tlast exit code = 0\\n' ;;
+  *) exit 113 ;;
+esac
+""")
+        result = subprocess.run(
+            ["bash", SCRIPT], env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        jobs = {row["name"]: row for row in self.reading().get("jobs", [])}
+        # The battery-alarm job has a declared label, so it should be matched with that.
+        self.assertEqual(jobs["battery-alarm"]["state"], "ok")
+        # The roms-catalog job has no declared label, so it should use the built one.
+        self.assertEqual(jobs["roms-catalog"]["state"], "ok")
 
 
 if __name__ == "__main__":
