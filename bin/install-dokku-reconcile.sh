@@ -22,6 +22,9 @@ cat > "$UNITS/dokku-reconcile.service" <<'UNIT'
 [Unit]
 Description=Start dokku apps that are down and rebuild the nginx vhosts
 Documentation=https://github.com/jhoughjr/roost/blob/main/bin/dokku-reconcile.sh
+# OnFailure is a [Unit] directive. In [Service] systemd ignores it with one line
+# in the journal and the alert never fires.
+OnFailure=dokku-reconcile-alert.service
 
 [Service]
 Type=oneshot
@@ -29,7 +32,6 @@ ExecStart=%h/opt/dokku-reconcile/dokku-reconcile.sh
 # Deliberately NOT SuccessExitStatus=1 any more. The non-zero exit is the one
 # case a person must act on, and OnFailure is how that reaches them — treating
 # it as success would keep the timer healthy and tell nobody.
-OnFailure=dokku-reconcile-alert.service
 UNIT
 
 # Told over LoRa, because everything else reports over the network that breaks.

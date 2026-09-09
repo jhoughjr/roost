@@ -63,5 +63,21 @@ class ReconcileInstallTest(unittest.TestCase):
         self.assertEqual(r.stdout.strip().splitlines()[-1], "function")
 
 
+    def test_the_failure_alert_is_wired_where_systemd_reads_it(self):
+        """OnFailure in [Service] is ignored with one journal line, so the alert never fires."""
+        unit = os.path.join(self.home, ".config", "systemd", "user", "dokku-reconcile.service")
+        section = None
+        placed = {}
+        for line in open(unit):
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line
+            elif line.startswith("OnFailure="):
+                placed[section] = line
+        self.assertIn("[Unit]", placed, "OnFailure is not in the section systemd reads")
+        self.assertNotIn("[Service]", placed)
+        self.assertIn("dokku-reconcile-alert.service", placed["[Unit]"])
+
+
 if __name__ == "__main__":
     unittest.main()
