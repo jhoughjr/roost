@@ -525,7 +525,7 @@ for line in sys.argv[9].splitlines():
                  "exit": int(code) if code.lstrip("-").isdigit() else None, "at": when,
                  "served": state == "ok", "running": state == "ok", "image": True})
 
-print(json.dumps({"host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
+print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
 ' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states")
   HDR=$(mktemp)
   chmod 600 "$HDR"
