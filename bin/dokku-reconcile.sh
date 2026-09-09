@@ -38,7 +38,11 @@ set -uo pipefail
 
 # Safe to source: the secret reader reads ~/.roostrc key by key and never sources it, so that file
 # cannot set a variable in this script, and this script decides what gets restarted.
-LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+# The repo keeps lib/ beside bin/, and the installed copy keeps its own lib/ inside the
+# install directory, because install-dokku-reconcile.sh copies this one file out of the repo.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB="$HERE/lib"
+[ -f "$LIB/roost-secret.sh" ] || LIB="$HERE/../lib"
 # shellcheck source=/dev/null
 . "$LIB/roost-secret.sh"
 

@@ -13,6 +13,10 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 install -d "$DEST" "$UNITS"
 install -m 755 "$SRC/dokku-reconcile.sh" "$DEST/dokku-reconcile.sh"
 [ -f "$SRC/mesh-alert.sh" ] && install -m 755 "$SRC/mesh-alert.sh" "$DEST/mesh-alert.sh"
+# The script reads NODE_KEY through the secret reader, so the reader travels with it. Without
+# this the installed copy sources a file that is not there and reports nothing, every ten minutes.
+install -d "$DEST/lib"
+install -m 644 "$SRC/../lib/roost-secret.sh" "$DEST/lib/roost-secret.sh"
 
 cat > "$UNITS/dokku-reconcile.service" <<'UNIT'
 [Unit]
