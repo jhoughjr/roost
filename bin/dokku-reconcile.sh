@@ -206,18 +206,75 @@ rebuilt=0
 # report, not a thing to keep fixing.
 state="${XDG_STATE_HOME:-$HOME/.local/state}/dokku-reconcile.last"
 install -d "$(dirname "$state")" 2>/dev/null || true
-now="started=$started imageless=$imageless_names unserved=$unserved_names"
+
+# Parse the previous quarantined list from the state file.
+quarantined=""
+if [ -f "$state" ]; then
+  quarantined=$(grep -o "quarantined=[^ ]*" "$state" 2>/dev/null | cut -d= -f2- || true)
+fi
+
+# On every pass, check if any quarantined app's container is now running.
+for app in $quarantined; do
+  if docker ps --format '{{.Names}}' | grep -qx "${app}.web.1"; then
+    dok proxy:enable "$app" > /dev/null 2>&1
+    dok proxy:build-config "$app" > /dev/null 2>&1
+    say "  proxy: $app is back, its vhost restored"
+    quarantined="${quarantined// $app / }"
+    quarantined="${quarantined#$app }"
+    quarantined="${quarantined% $app}"
+  fi
+done
+
+now="started=$started imageless=$imageless_names unserved=$unserved_names quarantined=$quarantined"
 was=$(cat "$state" 2>/dev/null || true)
 printf '%s\n' "$now" > "$state" 2>/dev/null || true
 
 if [ "$started" -gt 0 ] || [ "$unserved" -gt 0 ] || [ "$now" != "$was" ]; then
-  build=$(dok proxy:build-config --all)
-  if printf '%s' "$build" | grep -qi "Reloading nginx"; then
-    say "  proxy: rebuilt, nginx reloaded"
-    rebuilt=1
-  else
-    say "  proxy: rebuild did not report a reload - check nginx by hand"
-  fi
+  # Capture rebuild output and check for poisoned apps.
+  build=""
+  rebuild_count=0
+  max_rebuilds=3
+  quarantine_queue=""
+
+  while [ $rebuild_count -lt $max_rebuilds ]; do
+    rebuild_count=$((rebuild_count + 1))
+    build=$(dok proxy:build-config --all)
+
+    if printf '%s' "$build" | grep -qi "Reloading nginx"; then
+      say "  proxy: rebuilt, nginx reloaded"
+      rebuilt=1
+    else
+      say "  proxy: rebuild did not report a reload - check nginx by hand"
+    fi
+
+    # Extract poisoned app from error message.
+    poisoned_app=$(printf '%s' "$build" | grep -o 'host not found in upstream "invalid:[^"]*" in /home/dokku/[^/]*/nginx.conf' | head -1 | sed 's|.*in /home/dokku/||; s|/.*||')
+
+    if [ -n "$poisoned_app" ]; then
+      say "  proxy: quarantined $poisoned_app, its container has no address"
+      quarantine_queue="$quarantine_queue $poisoned_app"
+      # Disable the app via the same ssh channel.
+      dok proxy:disable "$poisoned_app" > /dev/null 2>&1
+    else
+      # No more poisoned apps found.
+      break
+    fi
+  done
+
+  # Add newly quarantined apps to the list.
+  for app in $quarantine_queue; do
+    if ! printf ' %s ' "$quarantined" | grep -q " $app "; then
+      quarantined="$quarantined $app"
+    fi
+  done
+
+  # Clean up whitespace.
+  quarantined=$(printf '%s' "$quarantined" | xargs)
+
+  # Update state file with the potentially changed quarantined list.
+  now="started=$started imageless=$imageless_names unserved=$unserved_names quarantined=$quarantined"
+  printf '%s\n' "$now" > "$state" 2>/dev/null || true
+
   # A rebuild that reported a reload and still does not serve is the failure that looks like success.
   # Ask again rather than trust the reload, because the reload is what was trusted last time.
   if [ "$unserved" -gt 0 ]; then

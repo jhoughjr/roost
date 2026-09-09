@@ -191,6 +191,78 @@ exec {real_curl} "$@"
     def rows(self):
         return {app["name"]: app for app in self.reading()["apps"]}
 
+    # ── quarantine of poisoned apps ──────────────────────────────────────
+
+    def test_rebuild_with_poisoned_app_disables_and_retries(self):
+        # A rebuild whose output names a poisoned app leads to proxy:disable and a second rebuild.
+        def ssh_with_poison(stub):
+            write_stub(stub, "ssh", """
+for arg in "$@"; do
+  case "$arg" in
+    apps:list) printf '=====> My Apps\\nstatus\\nbuggy\\n'; exit 0 ;;
+    "proxy:disable buggy") printf 'Disabled\\n'; exit 0 ;;
+    proxy:build-config)
+      if [ "$1" = "buggy" ]; then
+        printf 'Reloading nginx\\n'
+      else
+        printf 'host not found in upstream "invalid:5000" in /home/dokku/buggy/nginx.conf:80\\n'
+      fi
+      exit 0
+      ;;
+  esac
+done
+exit 0
+""")
+
+        self.write_stubs()
+        ssh_with_poison(self.stub)
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The script should report that the app was quarantined.
+        self.assertIn("proxy: quarantined buggy", result.stdout)
+
+    def test_quarantined_app_with_running_container_is_enabled(self):
+        # A quarantined app whose container is running leads to proxy:enable and per-app rebuild.
+        def ssh_with_enable(stub):
+            write_stub(stub, "ssh", """
+for arg in "$@"; do
+  case "$arg" in
+    apps:list) printf '=====> My Apps\\nstatus\\nrecovered\\n'; exit 0 ;;
+    "proxy:enable recovered") printf 'Enabled\\n'; exit 0 ;;
+    "proxy:build-config recovered") printf 'Reloading nginx\\n'; exit 0 ;;
+    proxy:build-config) printf 'Reloading nginx\\n'; exit 0 ;;
+  esac
+done
+exit 0
+""")
+
+        def docker_with_recovered(stub):
+            write_stub(stub, "docker", f"""
+case "$*" in
+  "ps --format {{{{.Names}}}}") printf 'status.web.1\\nrecovered.web.1\\n' ;;
+  "ps -a --format {{{{.Names}}}}") printf 'status.web.1 running\\nrecovered.web.1 running\\n' ;;
+  "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf 'status.web.1 running\\nrecovered.web.1 running\\n' ;;
+  run*) printf 'status status.opi\\n' ;;
+  *) exit 1 ;;
+esac
+""")
+
+        self.write_stubs()
+        ssh_with_enable(self.stub)
+        docker_with_recovered(self.stub)
+
+        # Set up state file with quarantined app.
+        state_dir = os.path.join(self.home, ".local", "state")
+        os.makedirs(state_dir, exist_ok=True)
+        state_file = os.path.join(state_dir, "dokku-reconcile.last")
+        with open(state_file, "w") as fh:
+            fh.write("started=0 imageless= unserved= quarantined=recovered")
+
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The script should report that the app is back.
+        self.assertIn("proxy: recovered is back, its vhost restored", result.stdout)
+
     # ── the containers dokku does not own ────────────────────────────────
 
     def test_declared_containers_answer_beside_dokku_apps(self):
