@@ -311,6 +311,67 @@ while read -r name state; do
   fi
 done <<< "$declared_states"
 
+# Collect database states for declared host containers.
+# For each container with a databases list, query its postgres cluster if running.
+database_states=$(python3 -c '
+import json, sys, subprocess
+declared_file, box_ips, container_states = sys.argv[1], sys.argv[2], sys.argv[3]
+here = set(box_ips.split())
+declared = {}
+if declared_file:
+    try:
+        with open(declared_file) as fh:
+            declared = json.load(fh)
+    except (OSError, ValueError):
+        declared = {}
+
+# Parse current container states.
+states = dict(
+    (parts[0], parts[1])
+    for parts in (line.split() for line in container_states.splitlines())
+    if len(parts) == 2
+)
+
+for stack in declared.get("stacks", []):
+    if stack.get("backend") != "host":
+        continue
+    if (stack.get("host") or "").split("@")[-1] not in here:
+        continue
+    for service in stack.get("services", []):
+        name = service.get("name")
+        if not name or not service.get("databases"):
+            continue
+        container_state = states.get(name)
+        # Query databases only if the container is running.
+        if container_state != "running":
+            for db_decl in service.get("databases", []):
+                db_name = db_decl.get("name")
+                if db_name:
+                    print(f"{name}/{db_name} unreachable")
+            continue
+        # Check postgres readiness and list databases.
+        try:
+            subprocess.run(["docker", "exec", name, "pg_isready", "-U", "postgres"],
+                          check=True, capture_output=True, timeout=10)
+            # pg_isready succeeded, query the database list.
+            result = subprocess.run(["docker", "exec", name, "psql", "-U", "postgres", "-Atc", "select datname from pg_database"],
+                                   capture_output=True, text=True, timeout=10)
+            databases = set(result.stdout.strip().split())
+            for db_decl in service.get("databases", []):
+                db_name = db_decl.get("name")
+                if db_name:
+                    state = "present" if db_name in databases else "missing"
+                    print(f"{name}/{db_name} {state}")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            # pg_isready failed or query timed out.
+            for db_decl in service.get("databases", []):
+                db_name = db_decl.get("name")
+                if db_name:
+                    print(f"{name}/{db_name} unreachable")
+' "$declared_file" \
+  "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)" \
+  "$(docker ps -a --format '{{.Names}} {{.State}}' || true)")
+
 say "dokku-reconcile: $checked apps, $started started, $imageless with no image, $unserved not served"
 if [ "$declared_up" -gt 0 ] || [ -n "$declared_down" ]; then
   say "  declared containers: $declared_up running${declared_down:+, not running:$declared_down}"
@@ -349,8 +410,18 @@ for line in sys.argv[7].splitlines():
     seen.add(name)
     apps.append({"name": name, "names": [], "served": state == "running", "running": state == "running", "image": state != "absent", "state": state})
 
+# Add database rows from the database_states.
+for line in sys.argv[8].splitlines():
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    name, state = parts
+    # Database row: kind is "database", name is "container/db", state maps to presence.
+    # running and served depend on the database state.
+    apps.append({"name": name, "kind": "database", "state": state, "running": state == "present", "served": state == "present"})
+
 print(json.dumps({"host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$(cat "$KEY_FILE")" > "$HDR"

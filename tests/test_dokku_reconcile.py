@@ -47,9 +47,13 @@ DECLARED = {
             "host": "jimmy@192.168.0.103", "manifest": "/infra-state/estate/hatchery.json",
             "services": [
                 {"name": "lan-dns", "kind": "container", "image": "4km3/dnsmasq:latest",
-                 "domains": [], "restart": "unless-stopped", "findings": []},
+                 "domains": [], "restart": "unless-stopped", "findings": [], "databases": []},
                 {"name": "rookery-pg", "kind": "container", "image": "postgres:17-alpine",
-                 "domains": [], "restart": "unless-stopped", "findings": []},
+                 "domains": [], "restart": "unless-stopped", "findings": [],
+                 "databases": [
+                    {"name": "rookery", "owner": "app_role"},
+                    {"name": "missing_db", "owner": "app_role"},
+                 ]},
                 {"name": "mwserver-temporal", "kind": "container", "image": "temporalio/temporal:1.8.1",
                  "domains": [], "restart": "unless-stopped", "findings": []},
             ],
@@ -143,6 +147,8 @@ case "$*" in
   "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf '%b' {json.dumps(ps_all)} ;;
   "ps -a --format {{{{.Names}}}}") printf '%b' {json.dumps(ps_all)} | awk '{{print $1}}' ;;
   "ps --format {{{{.Names}}}}") printf '%b' {json.dumps(ps_all)} | awk '$2 == "running" {{print $1}}' ;;
+  "exec rookery-pg pg_isready -U postgres") exit 0 ;;
+  "exec rookery-pg psql -U postgres -Atc select datname from pg_database") printf 'postgres\\ntemplate0\\ntemplate1\\nrookery\\n' ;;
   run*) printf 'status status.opi\\n' ;;
   *) exit 1 ;;
 esac
@@ -341,6 +347,80 @@ esac
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("lan-dns", self.rows())
         self.assertIn("status", self.rows())
+
+    # ── databases in declared containers ─────────────────────────────────
+
+    def test_declared_database_present(self):
+        # Set up stubs with rookery-pg running so we can query its databases.
+        def docker_with_running_pg(stub):
+            write_stub(stub, "docker", f"""
+case "$*" in
+  "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf 'status.web.1 running\\nlan-dns running\\nrookery-pg running\\nbuildx_buildkit_mwserver-builder0 running\\n' ;;
+  "ps -a --format {{{{.Names}}}}") printf 'status.web.1\\nlan-dns\\nrookery-pg\\nbuildx_buildkit_mwserver-builder0\\n' ;;
+  "ps --format {{{{.Names}}}}") printf 'status.web.1\\nlan-dns\\nrookery-pg\\nbuildx_buildkit_mwserver-builder0\\n' ;;
+  "exec rookery-pg pg_isready -U postgres") exit 0 ;;
+  "exec rookery-pg psql -U postgres -Atc select datname from pg_database") printf 'postgres\\ntemplate0\\ntemplate1\\nrookery\\n' ;;
+  run*) printf 'status status.opi\\n' ;;
+  *) exit 1 ;;
+esac
+""")
+
+        self.write_stubs()
+        docker_with_running_pg(self.stub)
+
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rows = self.rows()
+
+        # A database that exists in the cluster is present.
+        self.assertIn("rookery-pg/rookery", rows)
+        self.assertEqual(rows["rookery-pg/rookery"]["kind"], "database")
+        self.assertEqual(rows["rookery-pg/rookery"]["state"], "present")
+        self.assertTrue(rows["rookery-pg/rookery"]["running"])
+        self.assertTrue(rows["rookery-pg/rookery"]["served"])
+
+    def test_declared_database_missing(self):
+        # Set up stubs with rookery-pg running but missing_db not in the database list.
+        def docker_with_running_pg_no_missing(stub):
+            write_stub(stub, "docker", f"""
+case "$*" in
+  "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf 'status.web.1 running\\nlan-dns running\\nrookery-pg running\\nbuildx_buildkit_mwserver-builder0 running\\n' ;;
+  "ps -a --format {{{{.Names}}}}") printf 'status.web.1\\nlan-dns\\nrookery-pg\\nbuildx_buildkit_mwserver-builder0\\n' ;;
+  "ps --format {{{{.Names}}}}") printf 'status.web.1\\nlan-dns\\nrookery-pg\\nbuildx_buildkit_mwserver-builder0\\n' ;;
+  "exec rookery-pg pg_isready -U postgres") exit 0 ;;
+  "exec rookery-pg psql -U postgres -Atc select datname from pg_database") printf 'postgres\\ntemplate0\\ntemplate1\\nrookery\\n' ;;
+  run*) printf 'status status.opi\\n' ;;
+  *) exit 1 ;;
+esac
+""")
+
+        self.write_stubs()
+        docker_with_running_pg_no_missing(self.stub)
+
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rows = self.rows()
+
+        # A database that is declared but not in the cluster is missing.
+        self.assertIn("rookery-pg/missing_db", rows)
+        self.assertEqual(rows["rookery-pg/missing_db"]["kind"], "database")
+        self.assertEqual(rows["rookery-pg/missing_db"]["state"], "missing")
+        self.assertFalse(rows["rookery-pg/missing_db"]["running"])
+        self.assertFalse(rows["rookery-pg/missing_db"]["served"])
+
+    def test_declared_database_unreachable_when_container_stopped(self):
+        # Default stubs have rookery-pg stopped, so databases are unreachable.
+        self.write_stubs()
+
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rows = self.rows()
+
+        # The rookery-pg container is stopped, so its databases are unreachable.
+        self.assertIn("rookery-pg/rookery", rows)
+        self.assertIn("rookery-pg/missing_db", rows)
+        self.assertEqual(rows["rookery-pg/rookery"]["state"], "unreachable")
+        self.assertEqual(rows["rookery-pg/missing_db"]["state"], "unreachable")
 
 
 if __name__ == "__main__":
