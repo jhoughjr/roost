@@ -62,6 +62,8 @@ DECLARED = {
                  "schedule": "every 30s", "keepAlive": False, "platform": "linux", "findings": []},
                 {"name": "phoenix-runner-watchdog", "kind": "job", "image": "", "domains": [],
                  "schedule": "every 900s", "keepAlive": False, "platform": "linux", "findings": []},
+                {"name": "lan-cert", "kind": "job", "image": "", "domains": [],
+                 "schedule": "every 3600s", "keepAlive": False, "platform": "linux", "findings": []},
                 {"name": "roost-status", "kind": "job", "image": "", "domains": [],
                  "schedule": "every 900s", "keepAlive": False, "platform": "darwin", "findings": []},
             ],
@@ -183,25 +185,30 @@ for arg in "$@"; do
 done
 exec {real_curl} "$@"
 """)
-        # systemd, as the opi answers about the three jobs the declaration names for this box.
-        # One ran and succeeded, one ran and exited 1, and one has never exited at all.
+        # systemd, as the opi answers about the jobs the declaration names for this box.
+        # dokku-reconcile: timer fired and exited successfully; roost-node-report: fired and exited 56;
+        # phoenix-runner-watchdog: timer never fired; lan-cert: timer fired and is currently running.
         # Scheduled jobs are timer units; we query both the timer for the last trigger time and
-        # the service for the exit status.
+        # the service for the exit status, active state, and result.
         write_stub(self.stub, "systemctl", """
 case "$*" in
   *dokku-reconcile.timer*)
     printf 'LastTriggerUSec=Wed 2026-09-09 07:20:33 CDT\\n' ;;
   *dokku-reconcile.service*)
-    printf 'ExecMainStatus=0\\nExecMainExitTimestamp=Wed 2026-09-09 07:20:33 CDT\\n' ;;
+    printf 'ExecMainStatus=0\\nActiveState=inactive\\nResult=success\\n' ;;
   *roost-node-report.timer*)
     printf 'LastTriggerUSec=Wed 2026-09-09 07:21:03 CDT\\n' ;;
   *roost-node-report.service*)
-    printf 'ExecMainStatus=56\\nExecMainExitTimestamp=Wed 2026-09-09 07:21:03 CDT\\n' ;;
+    printf 'ExecMainStatus=56\\nActiveState=inactive\\nResult=exit-code\\n' ;;
   *phoenix-runner-watchdog.timer*)
     printf 'LastTriggerUSec=\\n' ;;
   *phoenix-runner-watchdog.service*)
-    printf 'ExecMainStatus=\\nExecMainExitTimestamp=\\n' ;;
-  *) printf 'ExecMainStatus=\\nExecMainExitTimestamp=\\n' ;;
+    printf 'ExecMainStatus=\\nActiveState=inactive\\nResult=\\n' ;;
+  *lan-cert.timer*)
+    printf 'LastTriggerUSec=Wed 2026-09-09 00:13:00 CDT\\n' ;;
+  *lan-cert.service*)
+    printf 'ExecMainStatus=0\\nActiveState=active\\nResult=success\\n' ;;
+  *) printf 'ExecMainStatus=\\nActiveState=inactive\\nResult=\\n' ;;
 esac
 """)
         write_stub(self.stub, "uptime", "printf '2026-09-08 09:00:00\\n'\n")
@@ -474,6 +481,16 @@ esac
         self.assertEqual(row["state"], "never-ran")
         self.assertEqual(row["at"], "")
 
+    def test_a_job_whose_service_is_currently_running_answers_running(self):
+        self.run_script()
+        row = self.rows()["lan-cert"]
+        self.assertEqual(row["kind"], "job")
+        self.assertEqual(row["state"], "running")
+        self.assertEqual(row["exit"], 0)
+        self.assertTrue(row["running"])
+        self.assertFalse(row["served"])
+        self.assertEqual(row["at"], "Wed 2026-09-09 00:13:00 CDT")
+
     def test_a_job_on_a_mac_is_not_this_box_to_answer_for(self):
         # roost-status is declared on the mini. The reconcile runs on the opi and answers for Linux.
         self.run_script()
@@ -486,7 +503,7 @@ esac
 
     def test_the_summary_names_the_jobs_that_are_not_ok(self):
         result = self.run_script()
-        self.assertIn("declared jobs: 1 ok", result.stdout)
+        self.assertIn("declared jobs: 2 ok", result.stdout)
         self.assertIn("roost-node-report(exit 56)", result.stdout)
         self.assertIn("phoenix-runner-watchdog(never-ran)", result.stdout)
 

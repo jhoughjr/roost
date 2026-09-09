@@ -132,12 +132,14 @@ for stack in declared.get("stacks", []):
             print(f"{name}|{unit_type}")
 ' "$declared_file" "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
 
-# What systemd says about each of them, as `name|exit|when`.
+# What systemd says about each of them, as `name|state|exit|when`.
 #
 # The supervisor is the only witness a job has. It answers no address and owns no vhost, so its last
-# exit and the time of it are the whole reading, and a unit systemd has never heard of answers with
-# no timestamp, which reads as never-ran. A scheduled job has a timer unit that records its last
-# trigger, so we query the timer for the timestamp and the associated service for the exit code.
+# exit and the time of it are the whole reading. A scheduled job has a timer unit that records its last
+# trigger, so we query the timer for the timestamp and the service for the exit code and active state.
+# A kept-alive job (no timer) reads the service only. The state is never-ran when the timer never fired or
+# ExecMainStartTimestamp is empty, running when ActiveState is active or activating, ok when Result is success
+# and ExecMainStatus is 0, and failed otherwise.
 declared_job_states=""
 while IFS='|' read -r unit unit_type; do
   [ -n "${unit:-}" ] || continue
@@ -146,18 +148,37 @@ while IFS='|' read -r unit unit_type; do
       -p LastTriggerUSec 2>/dev/null || true)
     when=$(printf '%s\n' "$shown" | sed -n 's/^LastTriggerUSec=//p')
     shown_svc=$(systemctl --user show "$unit.service" \
-      -p ExecMainStatus -p ExecMainExitTimestamp 2>/dev/null || true)
+      -p ExecMainStatus -p ActiveState -p Result 2>/dev/null || true)
     code=$(printf '%s\n' "$shown_svc" | sed -n 's/^ExecMainStatus=//p')
-    if [ -z "$when" ]; then
-      when=$(printf '%s\n' "$shown_svc" | sed -n 's/^ExecMainExitTimestamp=//p')
+    active=$(printf '%s\n' "$shown_svc" | sed -n 's/^ActiveState=//p')
+    result=$(printf '%s\n' "$shown_svc" | sed -n 's/^Result=//p')
+    if [ -z "$when" ] || [ "$when" = "0" ]; then
+      state="never-ran"
+    elif [ "$active" = "active" ] || [ "$active" = "activating" ]; then
+      state="running"
+    elif [ "$result" = "success" ] && [ "$code" = "0" ]; then
+      state="ok"
+    else
+      state="failed"
     fi
   else
     shown=$(systemctl --user show "$unit.service" \
-      -p ExecMainStatus -p ExecMainExitTimestamp 2>/dev/null || true)
+      -p ExecMainStatus -p ActiveState -p Result -p ExecMainStartTimestamp 2>/dev/null || true)
     code=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainStatus=//p')
-    when=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainExitTimestamp=//p')
+    active=$(printf '%s\n' "$shown" | sed -n 's/^ActiveState=//p')
+    result=$(printf '%s\n' "$shown" | sed -n 's/^Result=//p')
+    when=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainStartTimestamp=//p')
+    if [ -z "$when" ]; then
+      state="never-ran"
+    elif [ "$active" = "active" ] || [ "$active" = "activating" ]; then
+      state="running"
+    elif [ "$result" = "success" ] && [ "$code" = "0" ]; then
+      state="ok"
+    else
+      state="failed"
+    fi
   fi
-  declared_job_states="$declared_job_states$unit|${code:-}|${when:-}
+  declared_job_states="$declared_job_states$unit|$state|${code:-}|${when:-}
 "
 done <<< "$declared_job_units"
 
@@ -448,14 +469,14 @@ if [ "$declared_up" -gt 0 ] || [ -n "$declared_down" ]; then
 fi
 
 jobs_ok=0 jobs_bad=""
-while IFS='|' read -r unit code when; do
+while IFS='|' read -r unit state code when; do
   [ -n "${unit:-}" ] || continue
-  if [ -n "${code:-}" ] && [ -n "${when:-}" ] && [ "$code" = "0" ]; then
+  if [ "$state" = "ok" ] || [ "$state" = "running" ]; then
     jobs_ok=$((jobs_ok + 1))
-  elif [ -n "${code:-}" ] && [ -n "${when:-}" ]; then
-    jobs_bad="$jobs_bad $unit(exit $code)"
-  else
+  elif [ "$state" = "never-ran" ]; then
     jobs_bad="$jobs_bad $unit(never-ran)"
+  else
+    jobs_bad="$jobs_bad $unit(exit $code)"
   fi
 done <<< "$declared_job_states"
 if [ "$jobs_ok" -gt 0 ] || [ -n "$jobs_bad" ]; then
@@ -505,25 +526,19 @@ for line in sys.argv[8].splitlines():
     # running and served depend on the database state.
     apps.append({"name": name, "kind": "database", "state": state, "running": state == "present", "served": state == "present"})
 
-# A declared job carries the app keys too, so the same reader draws it, and the three the
-# supervisor answers: the state, the status the last run exited with, and when that was.
-# ok is a run that exited zero, failed is one that exited anything else, and never-ran is a unit
-# that has not exited at all — which is a new job, or one whose timer never elapsed.
+# A declared job carries the app keys too, so the same reader draws it, and the state from systemd.
+# The state comes from the bash reading: never-ran when the timer never fired or the service never started,
+# running when ActiveState is active or activating, ok when Result is success and ExecMainStatus is 0,
+# and failed otherwise.
 for line in sys.argv[9].splitlines():
     parts = line.split("|")
-    if len(parts) != 3 or not parts[0] or parts[0] in seen:
+    if len(parts) != 4 or not parts[0] or parts[0] in seen:
         continue
-    name, code, when = parts
-    if not code or not when:
-        state = "never-ran"
-    elif code == "0":
-        state = "ok"
-    else:
-        state = "failed"
+    name, state, code, when = parts
     seen.add(name)
     apps.append({"name": name, "names": [], "kind": "job", "state": state,
-                 "exit": int(code) if code.lstrip("-").isdigit() else None, "at": when,
-                 "served": state == "ok", "running": state == "ok", "image": True})
+                 "exit": int(code) if code and code.lstrip("-").isdigit() else None, "at": when,
+                 "served": state == "ok", "running": state == "running", "image": True})
 
 print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
 ' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states")
