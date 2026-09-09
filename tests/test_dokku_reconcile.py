@@ -185,15 +185,23 @@ exec {real_curl} "$@"
 """)
         # systemd, as the opi answers about the three jobs the declaration names for this box.
         # One ran and succeeded, one ran and exited 1, and one has never exited at all.
+        # Scheduled jobs are timer units; we query both the timer for the last trigger time and
+        # the service for the exit status.
         write_stub(self.stub, "systemctl", """
 case "$*" in
+  *dokku-reconcile.timer*)
+    printf 'LastTriggerUSec=Wed 2026-09-09 07:20:33 CDT\\n' ;;
   *dokku-reconcile.service*)
     printf 'ExecMainStatus=0\\nExecMainExitTimestamp=Wed 2026-09-09 07:20:33 CDT\\n' ;;
+  *roost-node-report.timer*)
+    printf 'LastTriggerUSec=Wed 2026-09-09 07:21:03 CDT\\n' ;;
   *roost-node-report.service*)
     printf 'ExecMainStatus=56\\nExecMainExitTimestamp=Wed 2026-09-09 07:21:03 CDT\\n' ;;
+  *phoenix-runner-watchdog.timer*)
+    printf 'LastTriggerUSec=\\n' ;;
   *phoenix-runner-watchdog.service*)
-    printf 'ExecMainStatus=0\\nExecMainExitTimestamp=\\n' ;;
-  *) printf 'ExecMainStatus=0\\nExecMainExitTimestamp=\\n' ;;
+    printf 'ExecMainStatus=\\nExecMainExitTimestamp=\\n' ;;
+  *) printf 'ExecMainStatus=\\nExecMainExitTimestamp=\\n' ;;
 esac
 """)
         write_stub(self.stub, "uptime", "printf '2026-09-08 09:00:00\\n'\n")

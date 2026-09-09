@@ -99,10 +99,11 @@ for stack in declared.get("stacks", []):
   "$(docker ps -a --format '{{.Names}} {{.State}}' || true)" \
   "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
 
-# The jobs the declaration names for this box, one unit per line.
+# The jobs the declaration names for this box, one per line with its unit type.
 #
 # A job is answered for by systemd rather than by docker, and by this box rather than by the Mac
-# that declares it, so the platform decides whose question it is.
+# that declares it, so the platform decides whose question it is. A scheduled job has a timer unit;
+# a kept-alive job has a service unit. The output is `name|type` where type is "timer" or "service".
 declared_job_units=$(python3 -c '
 import json, sys
 declared_file, box_ips = sys.argv[1], sys.argv[2]
@@ -126,21 +127,36 @@ for stack in declared.get("stacks", []):
             continue
         name = service.get("name")
         if name:
-            print(name)
+            keep_alive = service.get("keepAlive", False)
+            unit_type = "service" if keep_alive else "timer"
+            print(f"{name}|{unit_type}")
 ' "$declared_file" "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
 
 # What systemd says about each of them, as `name|exit|when`.
 #
 # The supervisor is the only witness a job has. It answers no address and owns no vhost, so its last
 # exit and the time of it are the whole reading, and a unit systemd has never heard of answers with
-# no timestamp, which reads as never-ran.
+# no timestamp, which reads as never-ran. A scheduled job has a timer unit that records its last
+# trigger, so we query the timer for the timestamp and the associated service for the exit code.
 declared_job_states=""
-while read -r unit; do
+while IFS='|' read -r unit unit_type; do
   [ -n "${unit:-}" ] || continue
-  shown=$(systemctl --user show "$unit.service" \
-    -p ExecMainStatus -p ExecMainExitTimestamp 2>/dev/null || true)
-  code=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainStatus=//p')
-  when=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainExitTimestamp=//p')
+  if [ "$unit_type" = "timer" ]; then
+    shown=$(systemctl --user show "$unit.timer" \
+      -p LastTriggerUSec 2>/dev/null || true)
+    when=$(printf '%s\n' "$shown" | sed -n 's/^LastTriggerUSec=//p')
+    shown_svc=$(systemctl --user show "$unit.service" \
+      -p ExecMainStatus -p ExecMainExitTimestamp 2>/dev/null || true)
+    code=$(printf '%s\n' "$shown_svc" | sed -n 's/^ExecMainStatus=//p')
+    if [ -z "$when" ]; then
+      when=$(printf '%s\n' "$shown_svc" | sed -n 's/^ExecMainExitTimestamp=//p')
+    fi
+  else
+    shown=$(systemctl --user show "$unit.service" \
+      -p ExecMainStatus -p ExecMainExitTimestamp 2>/dev/null || true)
+    code=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainStatus=//p')
+    when=$(printf '%s\n' "$shown" | sed -n 's/^ExecMainExitTimestamp=//p')
+  fi
   declared_job_states="$declared_job_states$unit|${code:-}|${when:-}
 "
 done <<< "$declared_job_units"
