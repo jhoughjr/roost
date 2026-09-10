@@ -141,7 +141,11 @@ for stack in declared.get("stacks", []):
         name = service.get("name")
         if name:
             keep_alive = service.get("keepAlive", False)
-            unit_type = "service" if keep_alive else "timer"
+            # A job with no schedule has no timer, whether it is kept alive or triggered by another unit.
+            # dokku-reconcile-alert is an OnFailure hook: not scheduled, not kept alive, and it has run three
+            # times. Asking a timer that cannot exist called it never-ran on every pass since it was declared.
+            scheduled = bool(service.get("schedule"))
+            unit_type = "timer" if scheduled and not keep_alive else "service"
             print(f"{name}|{unit_type}")
 ' "$declared_file" "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
 
@@ -150,7 +154,8 @@ for stack in declared.get("stacks", []):
 # The supervisor is the only witness a job has. It answers no address and owns no vhost, so its last
 # exit and the time of it are the whole reading. A scheduled job has a timer unit that records its last
 # trigger, so we query the timer for the timestamp and the service for the exit code and active state.
-# A kept-alive job (no timer) reads the service only. The state is never-ran when the timer never fired or
+# A job with no schedule has no timer and reads the service only, which covers a kept-alive job and one that
+# another unit triggers. The state is never-ran when the timer never fired or
 # ExecMainStartTimestamp is empty, running when ActiveState is active or activating, ok when Result is success
 # and ExecMainStatus is 0, and failed otherwise.
 declared_job_states=""
