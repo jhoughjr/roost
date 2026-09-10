@@ -18,6 +18,8 @@ Run:  python3 -m unittest discover -s tests   (from the roost root)
 import copy
 import json
 import os
+import shlex
+import time
 import shutil
 import stat
 import subprocess
@@ -221,6 +223,8 @@ case "$*" in
   *) printf 'ExecMainStatus=\\nActiveState=inactive\\nResult=\\n' ;;
 esac
 """)
+        # The reconcile wraps the radio read in `timeout -k`. A Mac has none, so this one skips its options and runs the rest.
+        write_stub(self.stub, "timeout", 'while [ "${1#-}" != "$1" ]; do shift 2; done\nshift\nexec "$@"\n')
         write_stub(self.stub, "uptime", "printf '2026-09-08 09:00:00\\n'\n")
         write_stub(self.stub, "hostname", "printf '192.168.0.103 10.0.0.1\\n'\n")
 
@@ -756,6 +760,60 @@ esac
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("dokku-reconcile-alert(never-ran)", result.stdout)
         self.assertEqual(self.rows()["dokku-reconcile-alert"]["state"], "ok")
+
+    # ── the mesh alert receiver ──────────────────────────────────────────
+
+    def declare_mesh(self, heard_ago):
+        """The alert's destination as the opi declares it, and a stand-in radio that last heard it `heard_ago` seconds ago.
+
+        None stands in for a radio that answers nothing, which is what a locked port looks like from here.
+        """
+        os.makedirs(os.path.join(self.home, ".config"), exist_ok=True)
+        with open(os.path.join(self.home, ".config", "mesh-alert.env"), "w") as fh:
+            # Any readable path passes the device check, and the stand-in never opens it.
+            fh.write("MESH_DEST=!a0cce924\nMESH_PORT=/dev/null\n")
+        if heard_ago is None:
+            body = "exit 0\n"
+        else:
+            nodes = {"!a0cce924": {"num": 2697783588, "lastHeard": int(time.time()) - heard_ago,
+                                   "user": {"shortName": "e924"}}}
+            body = "printf '%s\\n' " + shlex.quote("Nodes in mesh: " + json.dumps(nodes)) + "\n"
+        write_stub(self.stub, "meshtastic", body)
+
+    def test_a_receiver_heard_recently_reads_heard(self):
+        self.declare_mesh(heard_ago=60)
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        row = self.rows()["mesh-receiver"]
+        self.assertEqual(row["kind"], "mesh")
+        self.assertEqual(row["state"], "heard")
+        self.assertEqual(row["dest"], "!a0cce924")
+        self.assertIn("mesh receiver: !a0cce924 is heard", result.stdout)
+
+    def test_a_receiver_silent_past_the_threshold_reads_silent(self):
+        # The e924 went seventy-two days unheard before 2026-09-10, and nothing said so.
+        self.declare_mesh(heard_ago=3 * 86400)
+
+        self.run_script()
+
+        self.assertEqual(self.rows()["mesh-receiver"]["state"], "silent")
+
+    def test_a_radio_that_cannot_be_read_leaves_the_row_out(self):
+        # A locked port answers nothing. That is not evidence the receiver went silent, so no row claims it.
+        self.declare_mesh(heard_ago=None)
+
+        self.run_script()
+
+        self.assertNotIn("mesh-receiver", self.rows())
+
+    def test_no_declared_destination_asks_the_radio_nothing(self):
+        self.write_stubs()
+
+        self.run_script()
+
+        self.assertNotIn("mesh-receiver", self.rows())
 
 
 if __name__ == "__main__":
