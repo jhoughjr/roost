@@ -26,6 +26,8 @@ set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=/dev/null
 . "$BIN/roost-env.sh"
+# shellcheck source=/dev/null
+. "$BIN/../lib/roost-collector.sh" 2>/dev/null || . "$BIN/lib/roost-collector.sh"
 STATUS_SITE="${ROOST_STATUS_SITE:-$HOME/status-site}"
 
 cmd="${1:-help}"; shift || true
@@ -40,30 +42,31 @@ case "$cmd" in
   stats)
     SGEN="${ROOST_STATUSGEN:-$HOME/repos/statusgen}"
     [ -d "$SGEN/bin/collect" ] || { echo "roost stats: statusgen not found at $SGEN (set ROOST_STATUSGEN)"; exit 1; }
-    python3 "$SGEN/bin/collect/repo_stats.py" || echo "note: repo stats failed (non-fatal)"
-    python3 "$SGEN/bin/collect/ci_status.py" || echo "note: ci status failed (non-fatal)"
+    collector repo_stats python3 "$SGEN/bin/collect/repo_stats.py"
+    collector ci_status python3 "$SGEN/bin/collect/ci_status.py"
     # After ci_status: that one owns each repo's ✓/✗ tile, this one adds the
     # build's cost (time + green rate + trend) beside it.
-    python3 "$SGEN/bin/collect/ci_health.py" || echo "note: ci health failed (non-fatal)"
-    python3 "$SGEN/bin/collect/swift_tests.py" || echo "note: swift-tests failed (non-fatal)"
+    collector ci_health python3 "$SGEN/bin/collect/ci_health.py"
+    collector swift_tests python3 "$SGEN/bin/collect/swift_tests.py"
     # After swift_tests: that one counts the test cases a source tree declares, and this one reads what a gate actually reported.
     # A repo configured for both lands here second, so the measured result replaces the inventory tile rather than the reverse.
-    python3 "$SGEN/bin/collect/swift_test_report.py" || echo "note: swift-test-report failed (non-fatal)"
-    python3 "$SGEN/bin/collect/ci_live.py" || echo "note: ci live failed (non-fatal)"
-    python3 "$SGEN/bin/collect/shipped_week.py" || echo "note: shipped-week failed (non-fatal)"
-    python3 "$SGEN/bin/collect/narrative.py" || echo "note: narrative failed (non-fatal)"
-    python3 "$SGEN/bin/collect/api_consumption.py" || echo "note: api-consumption failed (non-fatal)"
-    python3 "$SGEN/bin/collect/proposal_state.py" || echo "note: proposal-state failed (non-fatal)"
+    collector swift_test_report python3 "$SGEN/bin/collect/swift_test_report.py"
+    collector ci_live python3 "$SGEN/bin/collect/ci_live.py"
+    collector shipped_week python3 "$SGEN/bin/collect/shipped_week.py"
+    collector narrative python3 "$SGEN/bin/collect/narrative.py"
+    collector api_consumption python3 "$SGEN/bin/collect/api_consumption.py"
+    collector proposal_state python3 "$SGEN/bin/collect/proposal_state.py"
     # Also Clauffice-sourced: the wayfinder map's frontier, blocked chains, and fog.
-    python3 "$SGEN/bin/collect/wayfinder.py" || echo "note: wayfinder failed (non-fatal)"
-    python3 "$SGEN/bin/collect/builds.py" || echo "note: builds failed (non-fatal)"
+    collector wayfinder python3 "$SGEN/bin/collect/wayfinder.py"
+    collector builds python3 "$SGEN/bin/collect/builds.py"
     # The boundary seam: health flows hatchery to roost. The collector reads hatchery's
     # status route (ROOST_HATCHERY_URL) and skips itself when unconfigured.
-    python3 "$SGEN/bin/collect/hatchery_stacks.py" || echo "note: hatchery stacks failed (non-fatal)"
-    python3 "$SGEN/bin/collect/loc.py" || echo "note: loc failed (non-fatal)"
+    collector hatchery_stacks python3 "$SGEN/bin/collect/hatchery_stacks.py"
+    collector loc python3 "$SGEN/bin/collect/loc.py"
     # After repo_stats: it upserts the "Test results" section wholesale, and
     # test_detail re-applies the tile links onto it each push.
-    python3 "$SGEN/bin/collect/test_detail.py" || echo "note: test-detail failed (non-fatal)"
+    collector test_detail python3 "$SGEN/bin/collect/test_detail.py"
+    collector_report
     ;;
   prune)  exec "$BIN/roost-prune.py" "$@" ;;
   status) exec "$BIN/status.sh" "$@" ;;
