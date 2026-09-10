@@ -660,8 +660,8 @@ esac
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("status: nginx answers for it, and the app gives 502 at /", result.stdout)
         self.assertIn("not healthy: status", result.stdout)
-        # No topic is configured in the test HOME, so the alert says what it would have sent.
-        self.assertIn("dokku: answering, and not well", result.stdout)
+        # The reading carries the fact, because pulse is what decides whether a person hears about it.
+        self.assertIs(self.rows()["status"]["healthy"], False)
         unhealthy = [event for event in self.events() if event.get("kind") == "unhealthy"]
         self.assertEqual(len(unhealthy), 1, self.events())
         self.assertEqual(unhealthy[0]["tone"], "err")
@@ -674,6 +674,7 @@ esac
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("not healthy:", result.stdout)
+        self.assertIs(self.rows()["status"]["healthy"], True)
         self.assertEqual([event for event in self.events() if event.get("kind") == "unhealthy"], [])
 
     def test_a_service_that_declares_no_path_is_never_asked(self):
@@ -689,18 +690,17 @@ esac
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("not healthy:", result.stdout)
+        self.assertNotIn("healthy", self.rows()["status"])
         self.assertEqual([event for event in self.events() if event.get("kind") == "unhealthy"], [])
 
-    def test_the_recovery_is_said_once_when_the_app_answers_again(self):
+    def test_the_reconcile_tells_no_phone(self):
+        # Every alert this script used to send is pulse's to send now, from the reading below.
         self.write_stubs(probe_code="502")
-        self.assertEqual(self.run_script().returncode, 0)
 
-        Pulse.posts = []
-        self.write_stubs(probe_code="200")
         result = self.run_script()
 
-        self.assertIn("health: status answers its health path again", result.stdout)
-        self.assertIn("dokku: healthy again", result.stdout)
+        self.assertNotIn("would have sent", result.stdout)
+        self.assertNotIn("ntfy", result.stdout.lower())
 
 
 if __name__ == "__main__":

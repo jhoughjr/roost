@@ -108,7 +108,7 @@ host once both lines say `vault`.
 | [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify, and its kind file |
 | [bin/publish-route.sh](bin/publish-route.sh) | Publish a subdomain through the Cloudflare tunnel via API — no dashboard |
 | [bin/status.sh](bin/status.sh) | The `roost status` orchestrator: self-update, collect, validate, deploy |
-| [bin/fleet-board.py](bin/fleet-board.py) / [bin/fleet-alert.py](bin/fleet-alert.py) | Fleet snapshot board + state-transition desktop/ntfy alerts |
+| [bin/fleet-board.py](bin/fleet-board.py) | Fleet snapshot board. Alerting is pulse's, from the readings roost posts it |
 | [bin/node-report.sh](bin/node-report.sh) | Per-node telemetry (load/mem/disk/watts/battery/runner/temps) → pulse `/api/nodes`, macOS + Linux; launchd/systemd installer alongside |
 | [bin/ci-live-report.sh](bin/ci-live-report.sh) | Live CI-run poller (runs on the CI Mac) → the ci-live app; launchd installer alongside |
 | [bin/gen-narrative.py](bin/gen-narrative.py) | Composes the board narrative from merged PRs when `roost status` gets no message |

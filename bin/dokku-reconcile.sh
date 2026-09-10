@@ -56,22 +56,6 @@ PULSE="${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}"
 say() { [ "$QUIET" = "1" ] || printf '%s\n' "$*"; }
 dok() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$DOKKU" "$@" 2>&1; }
 
-# Push to the phone. Kept quiet when no topic is configured, and never fatal:
-# a reconcile that dies because it could not send a message has made the outage
-# worse than the thing it was reporting.
-# Read, not sourced, matching runner-watchdog. Sourcing the file would let it set
-# any variable in this script, and this one decides what gets restarted.
-TOPIC="${ROOST_NTFY_TOPIC:-$(grep "^ROOST_NTFY_TOPIC=" "$HOME/.roostrc" 2>/dev/null | cut -d= -f2- || true)}"
-notify() {
-  local title="$1" msg="$2" prio="${3:-default}"
-  if [ -z "${TOPIC:-}" ]; then
-    say "  (no ROOST_NTFY_TOPIC; would have sent: $title - $msg)"
-    return 0
-  fi
-  curl -s -m 10 -H "Title: $title" -H "Priority: $prio" \
-    -d "$msg" "https://ntfy.sh/$TOPIC" >/dev/null 2>&1 || true
-}
-
 # The declaration, cached. pulse is the copy and the manifest is the record, so
 # a pulse that does not answer falls back to the last list this box saw, and a
 # box that has never seen one reports dokku's containers alone.
@@ -421,34 +405,12 @@ if [ "$started" -gt 0 ] || [ "$unserved" -gt 0 ] || [ "$now" != "$was" ]; then
     # rookery sat unreachable for three hours on 2026-09-09 while this exact line
     # was written to the journal each pass and nobody was told.
     #
-    # Said once when it starts, once when it clears, and once every six hours in
-    # between. A message per pass would be six an hour, which is how an alert
-    # stream stops being read.
-    stuck_state="${XDG_STATE_HOME:-$HOME/.local/state}/dokku-reconcile.stuck"
-    # The timestamp first and the names after it, because the names are a list and
-    # splitting on the first space would have kept only one of them: a recovery
-    # message naming one app when two came back is a message that reads as bad news.
-    was="$(cat "$stuck_state" 2>/dev/null || true)"
-    was_at="${was%% *}"
-    was_apps=""
-    [ "$was" != "$was_at" ] && was_apps="${was#* }"
-    case "$was_at" in ''|*[!0-9]*) was_at=0 ;; esac
-    now="$(date +%s)"
+    # Whether it is worth telling a person is pulse's to answer now. This pass says what it found,
+    # in the journal and in the reading it posts, and pulse holds the memory of what changed.
     if [ -n "$still" ]; then
       say "  proxy: still not serving after the rebuild:$still"
-      # The names, not the timestamp, decide whether this is news.
-      if [ "$was_apps" != "${still# }" ] || [ $((now - was_at)) -ge 21600 ]; then
-        notify "dokku: not serving after a rebuild" \
-          "$(hostname -s): nginx answers for no name of:$still. The rebuild ran and did not fix it, so this needs a person. Check the app's port map against its container port: dokku ports:report <app>." \
-          high
-        printf '%s %s\n' "$now" "${still# }" > "$stuck_state"
-      fi
     else
       say "  proxy: serving again for$unserved_names"
-      if [ -n "$was_apps" ]; then
-        notify "dokku: serving again" "$(hostname -s): $was_apps answers again."
-        rm -f "$stuck_state"
-      fi
     fi
   fi
 else
@@ -513,28 +475,8 @@ while IFS='|' read -r app path hosts; do
   esac
 done <<< "$declared_health"
 
-# Said once when it starts, once when it clears, and once every six hours in between.
-# This is the shape the not-serving alert takes, for the same reason: a message every ten minutes is how an alert stream stops being read.
-sick_state="${XDG_STATE_HOME:-$HOME/.local/state}/dokku-reconcile.unhealthy"
-sick_was="$(cat "$sick_state" 2>/dev/null || true)"
-sick_was_at="${sick_was%% *}"
-sick_was_apps=""
-[ "$sick_was" != "$sick_was_at" ] && sick_was_apps="${sick_was#* }"
-case "$sick_was_at" in ''|*[!0-9]*) sick_was_at=0 ;; esac
-sick_now=$(date +%s)
-if [ -n "$unhealthy_names" ]; then
-  # The names, not the timestamp, decide whether this is news.
-  if [ "$sick_was_apps" != "${unhealthy_names# }" ] || [ $((sick_now - sick_was_at)) -ge 21600 ]; then
-    notify "dokku: answering, and not well" \
-      "$(hostname -s): the app behind the vhost fails its own health path:$unhealthy_names. The proxy is fine, so the fault is the app's. Read its log: dokku logs <app> --tail." \
-      high
-    printf '%s %s\n' "$sick_now" "${unhealthy_names# }" > "$sick_state" 2>/dev/null || true
-  fi
-elif [ -n "$sick_was_apps" ]; then
-  say "  health: $sick_was_apps answers its health path again"
-  notify "dokku: healthy again" "$(hostname -s): $sick_was_apps answers its health path again."
-  rm -f "$sick_state"
-fi
+# The names this pass asked, so the reading can say `healthy` for them and null for every app that declares no path.
+asked_names=$(printf '%s\n' "$declared_health" | cut -d'|' -f1 | tr '\n' ' ')
 
 declared_up=0 declared_down=""
 while read -r name state; do
@@ -642,12 +584,18 @@ import json, sys
 still = set(sys.argv[1].split())
 imageless = set(sys.argv[2].split())
 running = set(line.split(".")[0] for line in sys.argv[3].split())
+asked = set(sys.argv[10].split())
+unhealthy = set(sys.argv[11].split())
 apps = []
 for line in sys.stdin:
     parts = line.split()
     if not parts:
         continue
-    apps.append({"name": parts[0], "names": parts[1:], "served": parts[0] not in still, "running": parts[0] in running, "image": parts[0] not in imageless})
+    # `healthy` is absent for an app that declares no health path: nothing was asked of it, so nothing is claimed.
+    app = {"name": parts[0], "names": parts[1:], "served": parts[0] not in still, "running": parts[0] in running, "image": parts[0] not in imageless}
+    if parts[0] in asked:
+        app["healthy"] = parts[0] not in unhealthy
+    apps.append(app)
 
 # A declared container carries the same keys as a dokku app so one reader draws
 # both. It owns no vhost, and it is reached through itself, so served follows
@@ -686,7 +634,7 @@ for line in sys.argv[9].splitlines():
                  "served": state == "ok", "running": state == "running", "image": True})
 
 print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$NODE_KEY" > "$HDR"
