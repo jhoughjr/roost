@@ -65,7 +65,9 @@ fi
 # On 2026-09-10 this reported sent twice for messages the destination never received, and only an ack said so.
 # The CLI exits 0 whatever the answer is, so its words are the answer.
 # The retransmits before a NAK take most of a minute, so the wait is longer than a plain send needs.
-answer=$(timeout 90 "$CLI" --port "$PORT" --dest "$DEST" --sendtext "$message" --ack 2>&1)
+# The CLI ignores the TERM a plain timeout sends: on 2026-09-10 a `--listen` under `timeout 240` was still holding the
+# port long after, and every send behind it failed to lock the device. `-k` kills it five seconds after the TERM.
+answer=$(timeout -k 5 90 "$CLI" --port "$PORT" --dest "$DEST" --sendtext "$message" --ack 2>&1)
 case "$answer" in
   *"Received an ACK."*)
     printf '%s\n%s\n' "$message" "$now" > "$STATE" 2>/dev/null || true
