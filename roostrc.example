@@ -81,6 +81,9 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_NTFY_TOPIC is still read by backup-watch.sh and runner-watchdog.sh.
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
 
+# where roost records which board collectors ran — optional
+# ROOST_COLLECTOR_LOG=${XDG_STATE_HOME:-$HOME/.local/state}/roost-collectors.json
+
 # rookery seats on a board — optional; skip all three and the collector skips itself
 # ROOST_ROOKERY_BOARD=clauffice
 # ROOST_ROOKERY_URL=https://rookery.jimmyhoughjr.net

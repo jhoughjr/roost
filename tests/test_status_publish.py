@@ -22,6 +22,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATUS_SH = os.path.join(ROOT, "bin", "status.sh")
+COLLECTOR_SH = os.path.join(ROOT, "lib", "roost-collector.sh")
 ENV_SH = os.path.join(ROOT, "bin", "roost-env.sh")
 
 GIT_ENV = {
@@ -59,6 +60,11 @@ class StatusPublishFixture(unittest.TestCase):
         shutil.copy(STATUS_SH, os.path.join(self.bin, "status.sh"))
         # status.sh sources this sibling for the rc load + defaults.
         shutil.copy(ENV_SH, os.path.join(self.bin, "roost-env.sh"))
+        # It also sources the collector recorder, which the repo keeps in lib/ beside bin/.
+        # A copy of the script keeps its own lib/ inside, which is the layout status.sh looks for first.
+        fixture_lib = os.path.join(self.bin, "lib")
+        os.makedirs(fixture_lib)
+        shutil.copy(COLLECTOR_SH, os.path.join(fixture_lib, "roost-collector.sh"))
         self.write_exec("fleet-board.py",
                         "#!/usr/bin/env python3\n"
                         "import os, sys\n"

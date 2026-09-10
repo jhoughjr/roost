@@ -203,12 +203,30 @@ if [ -n "${ROOST_SOURCE_REPOS:-}" ] || [ -n "${ROOST_STATS_REPO_DIR:-}" ]; then
 fi
 
 # 1. Collectors regenerate the generated boards (fleet, stat tiles, history).
-"$BIN/fleet-board.py" "$SITE/fleet/board.json" || echo "note: fleet collection failed (non-fatal)"
+# Each one is recorded, so a collector that has been broken for a week stops looking like one with nothing to say.
+# The repo keeps lib/ beside bin/, and a copy of this script keeps its own lib/ inside its directory.
+# dokku-reconcile.sh looks for its reader the same way, and for the same reason: a copy that sources a file which is not
+# there fails at the first collector rather than at the line that moved it.
+# shellcheck source=/dev/null
+COLLECTOR_LIB="$BIN/lib"
+[ -f "$COLLECTOR_LIB/roost-collector.sh" ] || COLLECTOR_LIB="$BIN/../lib"
+. "$COLLECTOR_LIB/roost-collector.sh"
+# Exported once rather than prefixed onto each call: a variable assignment in front of a bash function outlives the call,
+# which is a quirk worth not relying on either way.
+export STATUS_SITE_DIR="$SITE"
+collector fleet_board "$BIN/fleet-board.py" "$SITE/fleet/board.json"
+# `roost stats` writes its own fifteen records and merges them into the same file, so it is not wrapped here.
 "$BIN/roost" stats || echo "note: stat collectors failed (non-fatal)"
-STATUS_SITE_DIR="$SITE" python3 "$SGEN/bin/collect/history.py" || echo "note: history collection failed (non-fatal)"
+collector history python3 "$SGEN/bin/collect/history.py"
 # The seats rookery is running, onto the board a person already reads.
 # It skips itself when no rookery is configured, so a host that does not run one loses nothing.
-STATUS_SITE_DIR="$SITE" python3 "$SGEN/bin/collect/rookery.py" || echo "note: rookery collection failed (non-fatal)"
+collector rookery python3 "$SGEN/bin/collect/rookery.py"
+# Written before the section is drawn, because the section is a reading of this file and three of its rows are still in
+# memory until now.
+collector_report
+# The collectors' own section. Its own row is one pass behind, which is the one row it cannot draw about itself.
+collector collectors python3 "$SGEN/bin/collect/collectors.py"
+collector_report
 
 # 2. Keep the deployed renderer in lockstep with statusgen. Nothing used to do
 #    this on deploy, so an edited renderer could silently never reach the site;
