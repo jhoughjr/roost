@@ -60,10 +60,29 @@ fi
 
 # Best effort, always. An alert path that can fail the thing it watches is worse
 # than one that stays quiet: the reconcile must finish whatever the radio does.
-if timeout 60 "$CLI" --port "$PORT" --dest "$DEST" --sendtext "$message" >/dev/null 2>&1; then
-  printf '%s\n%s\n' "$message" "$now" > "$STATE" 2>/dev/null || true
-  echo "mesh-alert: sent to $DEST: $message" >&2
-else
-  echo "mesh-alert: the radio did not take it: $message" >&2
-fi
+#
+# The send waits for the destination to acknowledge, because "the radio took it" is not "it arrived".
+# On 2026-09-10 this reported sent twice for messages the destination never received, and only an ack said so.
+# The CLI exits 0 whatever the answer is, so its words are the answer.
+# The retransmits before a NAK take most of a minute, so the wait is longer than a plain send needs.
+answer=$(timeout 90 "$CLI" --port "$PORT" --dest "$DEST" --sendtext "$message" --ack 2>&1)
+case "$answer" in
+  *"Received an ACK."*)
+    printf '%s\n%s\n' "$message" "$now" > "$STATE" 2>/dev/null || true
+    echo "mesh-alert: delivered to $DEST, acknowledged: $message" >&2
+    ;;
+  *"implicit ACK"*)
+    # A neighbour rebroadcast it and the destination said nothing. Sending it again would buy airtime and no certainty.
+    printf '%s\n%s\n' "$message" "$now" > "$STATE" 2>/dev/null || true
+    echo "mesh-alert: relayed toward $DEST, delivery not confirmed: $message" >&2
+    ;;
+  *"Received a NAK"*)
+    # The state is not written, so the next pass sends it again rather than holding it back for hours.
+    reason=$(printf '%s\n' "$answer" | sed -n 's/.*error reason: //p' | head -1)
+    echo "mesh-alert: $DEST did not acknowledge (${reason:-no reason given}), so it will be sent again: $message" >&2
+    ;;
+  *)
+    echo "mesh-alert: the radio gave no answer, so it will be sent again: $message" >&2
+    ;;
+esac
 exit 0
