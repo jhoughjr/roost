@@ -60,6 +60,25 @@ def http_check(fqdn):
         return "000"
 
 
+def declared_expectations():
+    """The code each app declares for its root, from the declaration hatchery publishes to pulse.
+
+    `ROOST_EXPECTED_HTTP` was the only copy and every host kept its own, so the laptop and the mini disagreed about four
+    apps. A declared code wins, and the rc still answers for an app the declaration says nothing about.
+    A declaration that does not answer leaves the rc alone rather than stopping the board.
+    """
+    try:
+        document = fetch("/api/declared")
+    except (OSError, ValueError):
+        return {}
+    codes = {}
+    for stack in document.get("stacks", []):
+        for service in stack.get("services", []):
+            if service.get("expectedStatus"):
+                codes[service["name"]] = str(service["expectedStatus"])
+    return codes
+
+
 def is_app(row):
     """Whether an answered row is a dokku app rather than a container, a job or a database.
 
@@ -131,6 +150,7 @@ def host_metrics(nodes):
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(STATUS_SITE, "fleet/board.json")
+    EXPECTED.update(declared_expectations())
     answered = [row for row in (fetch("/api/answers").get("apps") or []) if is_app(row)]
     apps = sorted(answered, key=lambda row: row["name"])
     mem_pct, disk_pct, load = host_metrics(fetch("/api/stats").get("nodes") or [])
