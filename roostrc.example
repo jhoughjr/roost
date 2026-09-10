@@ -77,7 +77,8 @@ ROOST_STATUS_SITE=$HOME/status-site
 
 # fleet-board — apps whose root URL intentionally redirects; default expectation is 200
 # ROOST_EXPECTED_HTTP=status:302,blog:301
-# fleet-alert ntfy.sh phone notifications — optional; skip if unset
+# ntfy.sh phone notifications are pulse's now: set NTFY_TOPIC on the pulse app.
+# ROOST_NTFY_TOPIC is still read by backup-watch.sh and runner-watchdog.sh.
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
 
 # node-report (per-node telemetry → pulse /api/nodes; key is NODE_KEY, read

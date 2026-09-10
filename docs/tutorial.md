@@ -229,13 +229,9 @@ roost fleet     # regenerate the fleet board: every app, disk, memory, HTTP heal
 roost ui        # full-screen terminal — console, live monitor, config, docs
 ```
 
-For unattended alerting, `bin/install-fleet-alert.sh` installs a launchd
-agent that checks every 15 minutes and notifies **on state transitions
-only** — an app going down, or disk crossing 85%. Silence means nothing
-changed, which is what makes it worth having: an alert that fires every
-15 minutes is one you'll learn to ignore.
+Unattended alerting is pulse's, not roost's. pulse holds every reading roost posts it, so it decides on state transitions only - an app going down, or disk crossing 85% - and tells the phone. Silence means nothing changed, which is what makes it worth having: an alert that fires every 15 minutes is one you learn to ignore.
 
-Set `ROOST_NTFY_TOPIC` in `~/.roostrc` and the same alerts reach your
+Set `NTFY_TOPIC` on the pulse app and the same alerts reach your
 phone.
 
 When the box gets tight, reclaim build artifacts — dry-run by default, so

@@ -391,11 +391,7 @@ Three timescales, all part of Roost:
   report the exec scope, not the app.
 - **History board** — evolution: every status push, generated from git.
 
-Alerting: `roost/bin/fleet-alert.py` runs every 15 minutes via launchd
-(install once per Mac with `bin/install-fleet-alert.sh`) and
-sends a desktop notification when an app stops serving 200 or disk/memory
-cross thresholds — state-transition based, so it alerts once per incident,
-not every 15 minutes.
+Alerting: pulse does it, every 15 minutes, from the readings roost already posts it. An app that stops serving, an app answering badly at its declared health path, disk or memory crossing 85%, and a mains dip on a plug. It is state-transition based, so it says a thing once per incident rather than every 15 minutes, and it writes the same words to its events table because the phone forgets in about twelve hours. Set `NTFY_TOPIC` on the pulse app.
 
 **Off-box nodes** (the CI Mac mini, a workstation, opi): `roost/bin/node-report.sh`
 POSTs the box's load/memory/watts to pulse's `/api/nodes` with the
