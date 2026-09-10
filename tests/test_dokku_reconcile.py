@@ -67,6 +67,9 @@ DECLARED = {
                  "schedule": "every 3600s", "keepAlive": False, "platform": "linux", "findings": []},
                 {"name": "roost-status", "kind": "job", "image": "", "domains": [],
                  "schedule": "every 900s", "keepAlive": False, "platform": "darwin", "findings": []},
+                # An OnFailure hook: another unit starts it, so it is neither scheduled nor kept alive.
+                {"name": "dokku-reconcile-alert", "kind": "job", "image": "", "domains": [],
+                 "keepAlive": False, "platform": "linux", "findings": []},
             ],
         },
         {
@@ -213,6 +216,8 @@ case "$*" in
     printf 'LastTriggerUSec=Wed 2026-09-09 00:13:00 CDT\\n' ;;
   *lan-cert.service*)
     printf 'ExecMainStatus=0\\nActiveState=active\\nResult=success\\n' ;;
+  *dokku-reconcile-alert.service*)
+    printf 'ExecMainStatus=0\\nActiveState=inactive\\nResult=success\\nExecMainStartTimestamp=Wed 2026-09-09 23:51:05 CDT\\n' ;;
   *) printf 'ExecMainStatus=\\nActiveState=inactive\\nResult=\\n' ;;
 esac
 """)
@@ -518,7 +523,8 @@ esac
 
     def test_the_summary_names_the_jobs_that_are_not_ok(self):
         result = self.run_script()
-        self.assertIn("declared jobs: 2 ok", result.stdout)
+        # Three now: the OnFailure hook added to the fixture reads ok from its service rather than never-ran.
+        self.assertIn("declared jobs: 3 ok", result.stdout)
         self.assertIn("roost-node-report(exit 56)", result.stdout)
         self.assertIn("phoenix-runner-watchdog(never-ran)", result.stdout)
 
@@ -737,6 +743,19 @@ esac
         self.run_script()
 
         self.assertNotIn("memMb", self.rows()["lan-dns"])
+
+    # ── a job another unit triggers ──────────────────────────────────────
+
+    def test_a_job_with_no_schedule_is_read_from_its_service(self):
+        # dokku-reconcile-alert is an OnFailure hook. It has no timer and it has run, and asking a timer
+        # that cannot exist called it never-ran on every pass since it was declared.
+        self.write_stubs()
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("dokku-reconcile-alert(never-ran)", result.stdout)
+        self.assertEqual(self.rows()["dokku-reconcile-alert"]["state"], "ok")
 
 
 if __name__ == "__main__":
