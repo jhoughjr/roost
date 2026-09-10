@@ -28,7 +28,8 @@ class MeshAlertTest(unittest.TestCase):
         os.makedirs(self.bin)
         shim = os.path.join(self.bin, "timeout")
         with open(shim, "w") as fh:
-            fh.write('#!/usr/bin/env bash\nshift\nexec "$@"\n')
+            # It skips any option and its value, such as `-k 5`, then the duration, then runs the command.
+            fh.write('#!/usr/bin/env bash\nwhile [ "${1#-}" != "$1" ]; do shift 2; done\nshift\nexec "$@"\n')
         os.chmod(shim, os.stat(shim).st_mode | stat.S_IEXEC)
 
     def cli(self, prints):
