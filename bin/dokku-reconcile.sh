@@ -280,6 +280,9 @@ probe_name() {
 }
 
 # Every name the app owns, because the public name is often not the first line of VHOST.
+# The code each app gave is kept as well as whether it gave one. This pass asks only whether nginx answers, and the
+# code itself is what fleet-board.py currently makes its own ssh round trip to learn.
+app_codes=""
 while read -r app hosts; do
   [ -n "${hosts:-}" ] || continue
   served=0
@@ -288,6 +291,8 @@ while read -r app hosts; do
     code=$(probe_name "$host")
     if [ -n "$code" ] && [ "$code" != "000" ]; then served=1; break; fi
   done
+  app_codes="$app_codes$app=$code
+"
   if [ "$served" -eq 0 ]; then
     unserved=$((unserved + 1))
     unserved_names="$unserved_names $app"
@@ -579,6 +584,13 @@ PULSE="${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}"
 if [ -n "$NODE_KEY" ]; then
   # The boot time rides along, because a box that reset is a better why than any app-level fact.
   running=$(docker ps --format '{{.Names}}' | grep -E '^[a-zA-Z0-9_.-]+\.[a-z]+\.[0-9]+$' || true)
+  # Memory and age for every container in two calls, rather than one `dokku enter` per app from a Mac.
+  # fleet-board.py asks the box for these one app at a time over ssh, which is twenty-four round trips for facts
+  # the box can read about all of them at once. Reading them here is what lets that collector stop asking.
+  # `docker stats` takes a second or so because it samples, which is affordable once every ten minutes and was not
+  # affordable per app.
+  container_mem=$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null || true)
+  container_age=$(docker ps -a --format '{{.Names}} {{.CreatedAt}}' 2>/dev/null || true)
   reading=$(printf '%s\n' "$vhosts" | python3 -c '
 import json, sys
 still = set(sys.argv[1].split())
@@ -586,6 +598,44 @@ imageless = set(sys.argv[2].split())
 running = set(line.split(".")[0] for line in sys.argv[3].split())
 asked = set(sys.argv[10].split())
 unhealthy = set(sys.argv[11].split())
+
+# What the box knows about the containers of each app, which nothing off the box can read cheaply.
+# procs counts the containers an app owns rather than the process types dokku declares. They agree for every app the
+# estate runs, and this one is a fact about what is up rather than about what was asked for.
+def megabytes(text):
+    """docker stats writes 12.34MiB / 7.75GiB, and only the first half belongs to this container."""
+    used = text.split("/")[0].strip()
+    for suffix, scale in (("GiB", 1024.0), ("MiB", 1.0), ("KiB", 1 / 1024.0), ("B", 1 / 1048576.0)):
+        if used.endswith(suffix):
+            try:
+                return float(used[: -len(suffix)]) * scale
+            except ValueError:
+                return None
+    return None
+
+app_facts = {}
+for line in sys.argv[12].splitlines():
+    name, _, usage = line.partition(" ")
+    if "." not in name or not usage:
+        continue
+    mb = megabytes(usage)
+    if mb is None:
+        continue
+    entry = app_facts.setdefault(name.split(".")[0], {})
+    entry["memMb"] = round(entry.get("memMb", 0.0) + mb, 1)
+    entry["procs"] = entry.get("procs", 0) + 1
+for line in sys.argv[14].splitlines():
+    app_name, _, code = line.partition("=")
+    if app_name and code:
+        app_facts.setdefault(app_name, {})["httpCode"] = code.strip()
+for line in sys.argv[13].splitlines():
+    name, _, created = line.partition(" ")
+    if "." not in name or not created:
+        continue
+    entry = app_facts.setdefault(name.split(".")[0], {})
+    # The oldest container an app owns says how long the app has been up.
+    if "createdAt" not in entry or created < entry["createdAt"]:
+        entry["createdAt"] = created.strip()[:10]
 apps = []
 for line in sys.stdin:
     parts = line.split()
@@ -595,6 +645,9 @@ for line in sys.stdin:
     app = {"name": parts[0], "names": parts[1:], "served": parts[0] not in still, "running": parts[0] in running, "image": parts[0] not in imageless}
     if parts[0] in asked:
         app["healthy"] = parts[0] not in unhealthy
+    facts = app_facts.get(parts[0])
+    if facts:
+        app.update(facts)
     apps.append(app)
 
 # A declared container carries the same keys as a dokku app so one reader draws
@@ -634,7 +687,7 @@ for line in sys.argv[9].splitlines():
                  "served": state == "ok", "running": state == "running", "image": True})
 
 print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names" "$container_mem" "$container_age" "$app_codes")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$NODE_KEY" > "$HDR"

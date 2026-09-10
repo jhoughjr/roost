@@ -158,6 +158,10 @@ case "$*" in
   "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf '%b' {json.dumps(ps_all)} ;;
   "ps -a --format {{{{.Names}}}}") printf '%b' {json.dumps(ps_all)} | awk '{{print $1}}' ;;
   "ps --format {{{{.Names}}}}") printf '%b' {json.dumps(ps_all)} | awk '$2 == "running" {{print $1}}' ;;
+  "stats --no-stream --format {{{{.Name}}}} {{{{.MemUsage}}}}")
+    printf 'status.web.1 128.5MiB / 7.75GiB\\nstatus.worker.1 64MiB / 7.75GiB\\nlan-dns 8MiB / 7.75GiB\\n' ;;
+  "ps -a --format {{{{.Names}}}} {{{{.CreatedAt}}}}")
+    printf 'status.web.1 2026-09-01 10:00:00 -0500 CDT\\nstatus.worker.1 2026-08-20 09:00:00 -0500 CDT\\n' ;;
   "exec rookery-pg pg_isready -U postgres") exit 0 ;;
   "exec rookery-pg psql -U postgres -Atc select datname from pg_database") printf 'postgres\\ntemplate0\\ntemplate1\\nrookery\\n' ;;
   run*) printf 'status status.opi\\n' ;;
@@ -701,6 +705,38 @@ esac
 
         self.assertNotIn("would have sent", result.stdout)
         self.assertNotIn("ntfy", result.stdout.lower())
+
+    # ── the facts fleet-board asks the box for one app at a time ─────────
+
+    def test_the_reading_carries_memory_processes_and_age(self):
+        # fleet-board.py reads these over ssh per app. The box reads them for every container at once.
+        self.write_stubs()
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        status = self.rows()["status"]
+        # Two containers, so their memory is summed and they count as two processes.
+        self.assertAlmostEqual(status["memMb"], 192.5, places=1)
+        self.assertEqual(status["procs"], 2)
+        # The oldest container says how long the app has been up.
+        self.assertEqual(status["createdAt"], "2026-08-20")
+
+    def test_the_reading_carries_the_code_each_app_gave(self):
+        # fleet-board.py makes its own round trip for this, and the box already asked.
+        self.write_stubs(probe_code="302")
+
+        self.run_script()
+
+        self.assertEqual(self.rows()["status"]["httpCode"], "302")
+
+    def test_an_app_the_box_holds_no_container_for_carries_no_facts(self):
+        # Absent is not zero: an app with no container has no memory to report rather than none used.
+        self.write_stubs()
+
+        self.run_script()
+
+        self.assertNotIn("memMb", self.rows()["lan-dns"])
 
 
 if __name__ == "__main__":
