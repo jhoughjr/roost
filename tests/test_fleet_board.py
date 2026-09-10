@@ -50,6 +50,11 @@ class WhichRowsAreApps(unittest.TestCase):
 class TheRowAnAppDraws(unittest.TestCase):
     def setUp(self):
         FLEET.EXPECTED = {}
+        # The probe is the one thing still asked directly, so a case says what it answered.
+        self._probe = FLEET.http_check
+        FLEET.http_check = lambda fqdn: self.code
+        self.code = "200"
+        self.addCleanup(lambda: setattr(FLEET, "http_check", self._probe))
 
     def test_a_serving_app_reads_up_and_carries_what_the_box_measured(self):
         row, running, healthy, mb = FLEET.collect_app(answered())
@@ -65,27 +70,31 @@ class TheRowAnAppDraws(unittest.TestCase):
     def test_a_redirect_is_a_healthy_answer(self):
         # Every app that sends callers to https answers 301 or 302 at the box, and calling those degraded
         # made four correctly serving apps read as broken.
-        _, _, healthy, _ = FLEET.collect_app(answered(httpCode="302"))
+        self.code = "302"
+        _, _, healthy, _ = FLEET.collect_app(answered())
 
         self.assertTrue(healthy)
 
     def test_a_404_is_a_fault_until_a_person_names_it(self):
-        _, _, healthy, _ = FLEET.collect_app(answered(httpCode="404"))
+        self.code = "404"
+        _, _, healthy, _ = FLEET.collect_app(answered())
         self.assertFalse(healthy)
 
         FLEET.EXPECTED = {"vault": "404"}
-        _, _, healthy, _ = FLEET.collect_app(answered(httpCode="404"))
+        _, _, healthy, _ = FLEET.collect_app(answered())
         self.assertTrue(healthy)
 
     def test_an_app_that_is_not_running_reads_down(self):
-        row, running, healthy, _ = FLEET.collect_app(answered(running=False, httpCode="000"))
+        self.code = "000"
+        row, running, healthy, _ = FLEET.collect_app(answered(running=False))
 
         self.assertEqual(row["pill"]["text"], "down")
         self.assertFalse(running)
         self.assertFalse(healthy)
 
     def test_a_running_app_that_answers_badly_reads_degraded(self):
-        row, _, healthy, _ = FLEET.collect_app(answered(httpCode="502"))
+        self.code = "502"
+        row, _, healthy, _ = FLEET.collect_app(answered())
 
         self.assertEqual(row["pill"]["text"], "degraded")
         self.assertFalse(healthy)

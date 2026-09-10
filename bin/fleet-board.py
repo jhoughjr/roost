@@ -16,7 +16,7 @@ did not run, which is what the Collectors section on the clauffice board draws.
 
 Usage: fleet-board.py [output-path]   (default: ~/status-site/fleet/board.json)
 """
-import json, os, sys, urllib.error, urllib.request
+import concurrent.futures, json, os, subprocess, sys, urllib.error, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roostlib  # noqa: E402
@@ -24,6 +24,8 @@ import roostlib  # noqa: E402
 _RC = roostlib.read_rc()
 DOMAIN = roostlib.rc("ROOST_DOMAIN")
 PULSE = _RC.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/")
+# Only for the probe below. Nothing here opens an ssh channel any more.
+HOST_IP = roostlib.rc("ROOST_DOKKU_HOST").split("@")[-1]
 # Whose figures are the host figures. The box that runs the apps is the one whose memory and disk this board is about.
 FLEET_NODE = _RC.get("ROOST_FLEET_NODE", "opi")
 STATUS_SITE = os.path.expanduser(_RC.get("ROOST_STATUS_SITE", "~/status-site"))
@@ -38,6 +40,24 @@ def fetch(path):
     request = urllib.request.Request(PULSE + path, headers={"User-Agent": "roost-fleet-board"})
     with urllib.request.urlopen(request, timeout=30) as answer:
         return json.loads(answer.read())
+
+
+def http_check(fqdn):
+    """The code nginx gives for a name on port 80, asked at the box.
+
+    The reading from the box carries a code too, and it is not this one: the reconcile asks 443 first and falls back to
+    80, so an app that redirects to https answers 200 there and 301 here. `ROOST_EXPECTED_HTTP` is written against this
+    one, and swapping the source would call forgejo and vault degraded while both serve correctly.
+
+    It stays a probe from wherever this runs because it was never the expensive part. The hundred ssh round trips were.
+    """
+    try:
+        r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                            "-m", "8", "-H", f"Host: {fqdn}", f"http://{HOST_IP}/"],
+                           capture_output=True, text=True, timeout=12)
+        return r.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return "000"
 
 
 def is_app(row):
@@ -65,7 +85,7 @@ def collect_app(row):
     names = row.get("names") or []
     fqdn = next((d for d in names if d.endswith(DOMAIN)), names[0] if names else f"{app}.{DOMAIN}")
     running = bool(row.get("running"))
-    code = row.get("httpCode") or ("—" if not row.get("image", True) else "000")
+    code = http_check(fqdn) if row.get("image", True) else "—"
     expected = EXPECTED.get(app)
     if expected:
         healthy = running and code == expected
@@ -115,8 +135,11 @@ def main():
     apps = sorted(answered, key=lambda row: row["name"])
     mem_pct, disk_pct, load = host_metrics(fetch("/api/stats").get("nodes") or [])
 
+    # Six workers, as before: enough to collapse the wall time of twenty-four probes, few enough to be polite.
     rows, up, ok, fleet_mb = [], 0, 0, 0.0
-    for row, running, http_ok, mb in (collect_app(app) for app in apps):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        collected = list(pool.map(collect_app, apps))
+    for row, running, http_ok, mb in collected:
         rows.append(row)
         if running: up += 1
         if http_ok: ok += 1
@@ -133,7 +156,7 @@ def main():
         "eyebrow": "roost · as the box reported it",
         # No baked timestamp: the renderer shows a "Generated <local time>" stamp
         # from the board.json's HTTP Last-Modified, in the viewer's timezone.
-        "stamp": "Read from pulse by roost/bin/fleet-board.py, which is what the box reported about itself; "
+        "stamp": "Read from pulse by roost/bin/fleet-board.py, with the http code probed here; "
                  "refreshed on every roost status.",
         "sections": [
             {"kind": "stats", "items": [
