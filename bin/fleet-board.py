@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 """Roost fleet health → statusgen board.json.
 
-Gathers live platform state over the dokku@ SSH channel (works from any
-workstation — nothing runs on the host beyond dokku commands) and checks
-each app's HTTP reachability through nginx. Emits a statusgen board.
+Reads what the box already reported to pulse, and emits a statusgen board.
+
+This used to collect over the dokku@ SSH channel: four round trips per app for
+running, the names, the container age and the memory inside the container, plus
+one `dokku run` for the host figures. Twenty-four apps is about a hundred round
+trips from a Mac, for facts the box reads about every container at once and
+posts to pulse every ten minutes anyway. The reconcile carries them now, so this
+asks pulse instead and the ssh channel is not needed to draw the board.
+
+A pulse that does not answer is a failure rather than a board of guesses. The
+previous board.json stays where it is, and the collector record says this one
+did not run, which is what the Collectors section on the clauffice board draws.
 
 Usage: fleet-board.py [output-path]   (default: ~/status-site/fleet/board.json)
 """
-import concurrent.futures, json, os, re, subprocess, sys, datetime
+import json, os, sys, urllib.error, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roostlib  # noqa: E402
 
 _RC = roostlib.read_rc()
-DOKKU = roostlib.rc("ROOST_DOKKU_HOST")
-HOST_IP = DOKKU.split("@")[-1]
 DOMAIN = roostlib.rc("ROOST_DOMAIN")
-METRIC_APP = _RC.get("ROOST_METRIC_APP", "vault")  # host metrics via `run`
+PULSE = _RC.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/")
+# Whose figures are the host figures. The box that runs the apps is the one whose memory and disk this board is about.
+FLEET_NODE = _RC.get("ROOST_FLEET_NODE", "opi")
 STATUS_SITE = os.path.expanduser(_RC.get("ROOST_STATUS_SITE", "~/status-site"))
 EXPECTED = {}
 for pair in _RC.get("ROOST_EXPECTED_HTTP", "").split(","):
@@ -24,58 +33,39 @@ for pair in _RC.get("ROOST_EXPECTED_HTTP", "").split(","):
         app, code = pair.split(":", 1)
         EXPECTED[app.strip()] = code.strip()
 
-def ssh(*args, timeout=30):
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", DOKKU, *args],
-                       capture_output=True, text=True, timeout=timeout)
-    return r.stdout
+def fetch(path):
+    """One document from pulse. A failure is raised, because a board drawn from half an answer is worse than yesterday's board."""
+    request = urllib.request.Request(PULSE + path, headers={"User-Agent": "roost-fleet-board"})
+    with urllib.request.urlopen(request, timeout=30) as answer:
+        return json.loads(answer.read())
 
-def report_field(text, field):
-    m = re.search(rf"^\s*{re.escape(field)}:\s*(.+?)\s*$", text, re.M)
-    return m.group(1) if m else ""
 
-def http_check(fqdn):
-    try:
-        r = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                            "-m", "8", "-H", f"Host: {fqdn}", f"http://{HOST_IP}/"],
-                           capture_output=True, text=True, timeout=12)
-        return r.stdout.strip()
-    except subprocess.TimeoutExpired:
-        return "000"
+def is_app(row):
+    """Whether an answered row is a dokku app rather than a container, a job or a database.
 
-def collect_app(app):
-    """One app's row, over its own ssh calls, so the fleet collects in
-    parallel. 21 apps at 4-5 serial round-trips each cost the pipeline 140
-    seconds per push (measured 2026-08-20); the wall time is now the slowest
-    single app."""
-    rep = ssh("ps:report", app)
-    running = report_field(rep, "Running") == "true"
-    deployed = report_field(rep, "Deployed") == "true"
-    procs = report_field(rep, "Processes") or "0"
-    domains = ssh("domains:report", app, "--domains-app-vhosts").split()
-    fqdn = next((d for d in domains if d.endswith(DOMAIN)), domains[0] if domains else f"{app}.{DOMAIN}")
-    code = http_check(fqdn) if deployed else "—"
-    created = ""
-    try:
-        insp = json.loads(ssh("ps:inspect", app))
-        created = insp[0].get("Created", "")[:10]
-    except (json.JSONDecodeError, IndexError, ValueError):
-        pass
-    mem_mb = ""
-    if running:
-        # sum process RSS inside the container (cgroup files reflect the
-        # exec scope, not the app — learned the hard way)
-        rss_kb = sum(int(x) for x in ssh("enter", app, "web", "ps", "-o", "rss=").split() if x.isdigit())
-        if rss_kb:
-            mem_mb = f"{rss_kb / 1024:.0f} MB"
-    # A redirect is a healthy answer, not a fault. This probe reaches nginx over plain
-    # http at the box, so every app that sends callers to https answers 301 or 302, and
-    # comparing that against a flat "200" called forgejo, vault, rookery and rulings
-    # degraded while all four were serving correctly. An estate that reads as permanently
-    # half broken is one nobody looks at, which is the same fatigue as an alert flood.
-    #
-    # A 4xx still counts as a fault unless ROOST_EXPECTED_HTTP names it, because a 404 can
-    # equally mean an app with no root route or an app whose routes are wrong, and this
-    # check cannot tell those apart. Naming the ones that are known good is a person's job.
+    A job and a database name their kind. A container the box runs outside dokku owns no vhost, so its names are empty,
+    and an app always has at least one.
+    """
+    return "kind" not in row and bool(row.get("names"))
+
+
+def collect_app(row):
+    """One app's row, from what the box already said about it.
+
+    A redirect is a healthy answer, not a fault. The probe behind this reaches nginx over plain http at the box, so every
+    app that sends callers to https answers 301 or 302, and comparing that against a flat "200" called forgejo, vault,
+    rookery and rulings degraded while all four were serving correctly. An estate that reads as permanently half broken
+    is one nobody looks at, which is the same fatigue as an alert flood.
+
+    A 4xx still counts as a fault unless ROOST_EXPECTED_HTTP names it, because a 404 can equally mean an app with no
+    root route or an app whose routes are wrong, and this cannot tell those apart. Naming the ones that are known good
+    is the job of a person.
+    """
+    app = row["name"]
+    names = row.get("names") or []
+    fqdn = next((d for d in names if d.endswith(DOMAIN)), names[0] if names else f"{app}.{DOMAIN}")
+    running = bool(row.get("running"))
+    code = row.get("httpCode") or ("—" if not row.get("image", True) else "000")
     expected = EXPECTED.get(app)
     if expected:
         healthy = running and code == expected
@@ -84,10 +74,13 @@ def collect_app(app):
     http_bit = f"http {code}"
     if expected != "200" and code == expected:
         http_bit += " (expected)"
-    note_bits = [http_bit, f"{procs} proc"]
-    if mem_mb: note_bits.insert(1, mem_mb)
-    if created: note_bits.append(f"container since {created}")
-    row = {
+    mem_mb = f"{row['memMb']:.0f} MB" if isinstance(row.get("memMb"), (int, float)) else ""
+    note_bits = [http_bit, f"{row.get('procs', 0)} proc"]
+    if mem_mb:
+        note_bits.insert(1, mem_mb)
+    if row.get("createdAt"):
+        note_bits.append(f"container since {row['createdAt']}")
+    board_row = {
         "id": app,
         "q": fqdn,
         "href": f"https://{fqdn}/",
@@ -95,47 +88,39 @@ def collect_app(app):
         "pill": {"text": "up" if healthy else ("degraded" if running else "down"),
                  "tone": "go" if healthy else "srv"},
     }
-    return row, running, code == expected, float(mem_mb.split()[0]) if mem_mb else 0.0
+    return board_row, running, healthy, float(row.get("memMb") or 0.0)
 
 
-def host_metrics():
-    """(mem%, disk%, load) via ONE container. This was three `dokku run`
-    calls, and every `dokku run` boots a fresh container - three boots per
-    push to read three numbers."""
-    mem_pct = disk_pct = load = "?"
-    try:
-        combined = ssh("run", METRIC_APP, "sh", "-c",
-                       "'free -m; df -h /; uptime'", timeout=60)
-        m = re.search(r"^Mem:\s+(\d+)\s+(\d+)", combined, re.M)
-        if m:
-            mem_pct = f"{int(m.group(2)) * 100 // int(m.group(1))}%"
-        m = re.search(r"(\d+)%", combined)
-        if m:
-            disk_pct = f"{m.group(1)}%"
-        m = re.search(r"load average[s]?:\s*([\d.]+)", combined)
-        if m:
-            load = m.group(1)
-    except subprocess.TimeoutExpired:
-        pass
-    return mem_pct, disk_pct, load
+def host_metrics(nodes):
+    """(mem%, disk%, load) for the box the apps run on, from the reading node-report already posts."""
+    node = next((n for n in nodes if n.get("name") == FLEET_NODE), None)
+    if not node:
+        return "?", "?", "?"
+
+    def percent(used, total):
+        try:
+            return f"{int(used) * 100 // int(total)}%" if int(total) else "?"
+        except (TypeError, ValueError):
+            return "?"
+
+    load = node.get("load1")
+    return (percent(node.get("memUsedMb"), node.get("memTotalMb")),
+            percent(node.get("diskUsedMb"), node.get("diskTotalMb")),
+            f"{load:.2f}" if isinstance(load, (int, float)) else "?")
 
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(STATUS_SITE, "fleet/board.json")
-    apps = [a.strip() for a in ssh("apps:list").splitlines()
-            if a.strip() and not a.startswith("=")]
+    answered = [row for row in (fetch("/api/answers").get("apps") or []) if is_app(row)]
+    apps = sorted(answered, key=lambda row: row["name"])
+    mem_pct, disk_pct, load = host_metrics(fetch("/api/stats").get("nodes") or [])
 
-    # 6 workers: enough to collapse the wall time, few enough to stay clear of
-    # sshd's connection throttle on the host.
     rows, up, ok, fleet_mb = [], 0, 0, 0.0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        metrics = pool.submit(host_metrics)
-        for row, running, http_ok, mb in pool.map(collect_app, apps):
-            rows.append(row)
-            if running: up += 1
-            if http_ok: ok += 1
-            fleet_mb += mb
-        mem_pct, disk_pct, load = metrics.result()
+    for row, running, http_ok, mb in (collect_app(app) for app in apps):
+        rows.append(row)
+        if running: up += 1
+        if http_ok: ok += 1
+        fleet_mb += mb
 
     def tone_pct(v, warn):
         try:
@@ -145,10 +130,10 @@ def main():
 
     board = {
         "title": "Fleet Health",
-        "eyebrow": "roost · live from dokku",
+        "eyebrow": "roost · as the box reported it",
         # No baked timestamp: the renderer shows a "Generated <local time>" stamp
         # from the board.json's HTTP Last-Modified, in the viewer's timezone.
-        "stamp": "Collected over the dokku@ channel by roost/bin/fleet-board.py; "
+        "stamp": "Read from pulse by roost/bin/fleet-board.py, which is what the box reported about itself; "
                  "refreshed on every roost status.",
         "sections": [
             {"kind": "stats", "items": [
