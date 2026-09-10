@@ -33,7 +33,12 @@ if [ -z "$DEST" ]; then
   echo "mesh-alert: MESH_DEST is unset, so nothing was sent: $message" >&2
   exit 0
 fi
-command -v meshtastic >/dev/null 2>&1 || {
+# The CLI lives in a venv of its own on the opi, because Debian refuses a system pip and python3-venv is not installed.
+# A unit's PATH does not reach it, so it is looked for there after MESH_CLI and the PATH.
+CLI="${MESH_CLI:-}"
+[ -n "$CLI" ] || CLI="$(command -v meshtastic 2>/dev/null || true)"
+[ -n "$CLI" ] || { [ -x "$HOME/opt/meshtastic/bin/meshtastic" ] && CLI="$HOME/opt/meshtastic/bin/meshtastic"; }
+[ -n "$CLI" ] || {
   echo "mesh-alert: no meshtastic cli, so nothing was sent: $message" >&2
   exit 0
 }
@@ -55,7 +60,7 @@ fi
 
 # Best effort, always. An alert path that can fail the thing it watches is worse
 # than one that stays quiet: the reconcile must finish whatever the radio does.
-if timeout 60 meshtastic --port "$PORT" --dest "$DEST" --sendtext "$message" >/dev/null 2>&1; then
+if timeout 60 "$CLI" --port "$PORT" --dest "$DEST" --sendtext "$message" >/dev/null 2>&1; then
   printf '%s\n%s\n' "$message" "$now" > "$STATE" 2>/dev/null || true
   echo "mesh-alert: sent to $DEST: $message" >&2
 else
