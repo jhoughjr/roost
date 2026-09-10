@@ -596,6 +596,53 @@ if [ -n "$NODE_KEY" ]; then
   # affordable per app.
   container_mem=$(docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' 2>/dev/null || true)
   container_age=$(docker ps -a --format '{{.Names}} {{.CreatedAt}}' 2>/dev/null || true)
+  # When the mesh alert's receiver was last heard, asked of the opi's own radio.
+  # The alert speaks over LoRa because pulse dies with the network, and on 2026-09-10 its receiver had been silent for
+  # seventy-two days while nothing said so. The radio knew. This asks it, and pulse decides whether the answer is news.
+  # A radio that cannot be read leaves the row out rather than calling the receiver silent, so a locked port is no alarm.
+  # The file is read key by key and never sourced, like ~/.roostrc, so it cannot set a variable in this script.
+  mesh_line=""
+  mesh_env="$HOME/.config/mesh-alert.env"
+  mesh_dest=$(sed -n 's/^MESH_DEST=//p' "$mesh_env" 2>/dev/null | tail -1)
+  mesh_port=$(sed -n 's/^MESH_PORT=//p' "$mesh_env" 2>/dev/null | tail -1)
+  mesh_port="${mesh_port:-/dev/ttyUSB0}"
+  mesh_hours=$(sed -n 's/^MESH_SILENT_HOURS=//p' "$mesh_env" 2>/dev/null | tail -1)
+  mesh_cli="${MESH_CLI:-$(command -v meshtastic 2>/dev/null || true)}"
+  [ -n "$mesh_cli" ] || { [ -x "$HOME/opt/meshtastic/bin/meshtastic" ] && mesh_cli="$HOME/opt/meshtastic/bin/meshtastic"; }
+  if [ -n "$mesh_dest" ] && [ -n "$mesh_cli" ] && [ -r "$mesh_port" ]; then
+    # The CLI ignores the TERM a plain timeout sends, so -k kills it and the port is free for the alert behind it.
+    mesh_line=$(timeout -k 5 45 "$mesh_cli" --port "$mesh_port" --info 2>/dev/null | python3 -c '
+import json, sys, time
+dest, hours = sys.argv[1], float(sys.argv[2] or 24)
+text = sys.stdin.read()
+i = text.find("Nodes in mesh:")
+if i < 0:
+    sys.exit(0)
+blob = text[i + len("Nodes in mesh:"):]
+start = blob.find("{")
+if start < 0:
+    sys.exit(0)
+depth, end = 0, -1
+for j, c in enumerate(blob[start:], start):
+    depth += (c == "{") - (c == "}")
+    if depth == 0:
+        end = j + 1
+        break
+if end < 0:
+    sys.exit(0)
+try:
+    nodes = json.loads(blob[start:end])
+except ValueError:
+    sys.exit(0)
+heard = int((nodes.get(dest) or {}).get("lastHeard") or 0)
+# Never heard is silent too. A receiver the radio has no record of cannot be reached.
+state = "heard" if heard and time.time() - heard <= hours * 3600 else "silent"
+print("%s|%s|%d" % (dest, state, heard))
+' "$mesh_dest" "${mesh_hours:-24}" || true)
+  fi
+  if [ -n "$mesh_line" ]; then
+    say "  mesh receiver: ${mesh_line%%|*} is $(printf '%s' "$mesh_line" | cut -d'|' -f2)"
+  fi
   reading=$(printf '%s\n' "$vhosts" | python3 -c '
 import json, sys
 still = set(sys.argv[1].split())
@@ -691,8 +738,17 @@ for line in sys.argv[9].splitlines():
                  "exit": int(code) if code and code.lstrip("-").isdigit() else None, "at": when,
                  "served": state == "ok", "running": state == "running", "image": True})
 
+# The mesh alert receiver, when the radio could be read. Its row says whether the one channel that survives the
+# network can still reach a person. It carries no names, so no reader draws it as an app.
+mesh = sys.argv[15].split("|")
+if len(mesh) == 3 and mesh[0]:
+    dest, state, heard = mesh
+    apps.append({"name": "mesh-receiver", "names": [], "kind": "mesh", "state": state, "dest": dest,
+                 "lastHeard": int(heard) if heard.isdigit() and int(heard) else None,
+                 "served": state == "heard", "running": state == "heard", "image": True})
+
 print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names" "$container_mem" "$container_age" "$app_codes")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names" "$container_mem" "$container_age" "$app_codes" "$mesh_line")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$NODE_KEY" > "$HDR"
