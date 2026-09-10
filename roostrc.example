@@ -81,6 +81,11 @@ ROOST_STATUS_SITE=$HOME/status-site
 # ROOST_NTFY_TOPIC is still read by backup-watch.sh and runner-watchdog.sh.
 # ROOST_NTFY_TOPIC=roost-jimmy-12345678
 
+# rookery seats on a board — optional; skip all three and the collector skips itself
+# ROOST_ROOKERY_BOARD=clauffice
+# ROOST_ROOKERY_URL=https://rookery.jimmyhoughjr.net
+# ROOST_ROOKERY_TOKEN=...
+
 # node-report (per-node telemetry → pulse /api/nodes; key is NODE_KEY, read
 # through the vault keys above)
 # macOS and Linux. Measured watts come from macmon (Apple silicon) or, on Linux,

@@ -206,6 +206,9 @@ fi
 "$BIN/fleet-board.py" "$SITE/fleet/board.json" || echo "note: fleet collection failed (non-fatal)"
 "$BIN/roost" stats || echo "note: stat collectors failed (non-fatal)"
 STATUS_SITE_DIR="$SITE" python3 "$SGEN/bin/collect/history.py" || echo "note: history collection failed (non-fatal)"
+# The seats rookery is running, onto the board a person already reads.
+# It skips itself when no rookery is configured, so a host that does not run one loses nothing.
+STATUS_SITE_DIR="$SITE" python3 "$SGEN/bin/collect/rookery.py" || echo "note: rookery collection failed (non-fatal)"
 
 # 2. Keep the deployed renderer in lockstep with statusgen. Nothing used to do
 #    this on deploy, so an edited renderer could silently never reach the site;
