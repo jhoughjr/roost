@@ -154,7 +154,10 @@ def service_state():
     state = {"host": host, "reachable": False, "scheduled": None,
              "last_success": None, "last_run_ok": None, "log_tail": [], "warnings": []}
     rc, out, _ = run(host, "cat ~/.local/state/opi-backup/last-success 2>/dev/null; "
-                           "echo '---'; crontab -l 2>/dev/null | grep -c opi-backup; "
+                           # Since 2026-09-09 a systemd user timer holds the schedule.
+                           # The crontab line is the older form, and either one counts.
+                           "echo '---'; { systemctl --user is-active opi-backup.timer 2>/dev/null; "
+                           "crontab -l 2>/dev/null | grep opi-backup; } | grep -c -e '^active$' -e opi-backup; "
                            "echo '---'; tail -6 ~/.local/state/opi-backup/last-run.log 2>/dev/null; "
                            "echo '---'; cat ~/.local/state/opi-backup/last-warnings 2>/dev/null")
     if rc != 0:

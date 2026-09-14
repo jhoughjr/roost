@@ -149,17 +149,29 @@ if [ -n "${TAR_WRITE_BPS}" ]; then
     fi
 fi
 
+# Arguments after the fourth are paths to leave out, relative to the source, as `./path`.
 tar_root() {
     local src="$1" name="$2" target="${3:-$1}" needs_root="${4:-1}"
+    local excludes=() path
+    for path in "${@:5}"; do
+        excludes+=(--exclude "${path}")
+    done
     docker run --rm "${TAR_LIMIT[@]+"${TAR_LIMIT[@]}"}" \
         -v "${src}":/src:ro -v "${STAGE}/tar":/out alpine \
-        tar --numeric-owner -cf "/out/${name}.tar" -C /src . 2>/dev/null || true
+        tar --numeric-owner "${excludes[@]+"${excludes[@]}"}" -cf "/out/${name}.tar" -C /src . 2>/dev/null || true
     chmod 644 "${STAGE}/tar/${name}.tar" 2>/dev/null || true
     manifest_add "tar/${name}.tar" tar "${src}" "${target}" "${needs_root}" "" ""
 }
 
 # The dokku tree carries the Forgejo repositories, the vault data, and every app config.
-tar_root /var/lib/dokku dokku
+# Two Forgejo stores in vault's S3 are left out, because they rebuild.
+# The package registry holds the CI container images. On 2026-09-14 it held 101 rookery
+# versions and 20 GB, which made dokku.tar 19 GB. Each nightly image added gigabytes to
+# the upload, and the runs on 2026-09-13 and 2026-09-14 failed partway on the SFTP writes.
+# A CI build pushes the images again. The repository archives are a download cache.
+tar_root /var/lib/dokku dokku /var/lib/dokku 1 \
+    ./data/storage/vault/s3/forgejo/packages \
+    ./data/storage/vault/s3/forgejo/repo-archive
 tar_root /etc etc
 
 # Home Assistant runs as root, so its `.storage` files belong to root inside this bind mount.
