@@ -35,6 +35,9 @@ diagnoses the setup when anything misbehaves.
 | `roost lan-cert <name> <user@host> <dir> [label]` | issue or renew a LAN name's certificate through DNS-01 in the certbot container, and place it on the host that serves it; `bin/install-lan-cert.sh` runs it daily |
 | `roost status ["message"]` | collect + validate + deploy the status site (no message: narrative auto-composed from merged PRs) |
 | `roost stats` | run the configured board-stat collectors |
+| `roost tapo [--json\|--watch\|--discover]` | read the Tapo smart plugs over their local API, write the cache node-report reads, and post the readings to pulse `/api/tapo` |
+| `roost ha-scoop [--days N\|--json\|--entities]` | copy the hourly power statistics of Home Assistant into pulse, to fill the gaps in its sampled history |
+| `roost forge-log <owner>/<repo> <run> [job]` | read the log of a forge job from the SQLite database of the forge over ssh, read-only. `--task <id>` reads one task |
 | `roost fleet` | refresh the fleet board json |
 | `roost kick` | fire the status runner's hourly deploy now |
 | `roost rollout [--kick]` | ff-only pull roost + statusgen on every writer machine after a merge |
@@ -43,7 +46,7 @@ diagnoses the setup when anything misbehaves.
 | `roost backup [--json|--run|--check|--serve]` | backup service state; `--serve` opens a local web page, and tab 5 of `roost ui` does the same in the terminal |
 | `roost secrets` | say where this host reads each secret from: vault, a legacy file, or nowhere |
 | `roost doctor` | diagnose ssh, token, zone, and tooling |
-| `roost ui` | full-screen terminal: console, monitor, config, docs tabs |
+| `roost ui` | full-screen terminal: console, monitor, config, docs, and backups tabs |
 
 Configuration lives in `~/.roostrc` ([roostrc.example](roostrc.example)). The
 pulse `NODE_KEY` and the ci-live `CI_KEY` come from vault, described in the
@@ -102,7 +105,11 @@ host once both lines say `vault`.
 | [docs/tutorial.md](docs/tutorial.md) | Guided tour: deploy an app, board it, operate it — and which of the three repos to touch |
 | [docs/playbook.md](docs/playbook.md) | The operating manual: storage, crons, secrets, accounts, status boards, fleet observability, backups and restore, disk reclaim, and every gotcha learned the hard way |
 | [homeauto](https://github.com/jhoughjr/homeauto) | Smart plugs, bulbs and Home Assistant: wiring, credential locations, rebuild-from-nothing plan (separate repo) |
-| [docs/status-events.md](docs/status-events.md) | Design sketch (future): push-based CI → central ingest → boards + history |
+| [docs/status-events.md](docs/status-events.md) | Design sketch: push-based CI to a central ingest, then boards and history. pulse has the ingest route `/api/events`, and the CI side is not built |
+| [docs/opi-backup-restore.md](docs/opi-backup-restore.md) | The restore order for the nightly opi backup |
+| [docs/mesh-alert-setup.md](docs/mesh-alert-setup.md) | The LoRa alert path: what `mesh-alert.sh` needs on the opi before it can send |
+| [docs/roost-and-hatchery.md](docs/roost-and-hatchery.md) | How roost and hatchery divide the estate |
+| [ci/README.md](ci/README.md) | The forge and its CI: mirrored actions, the runner config, and the job images in `ci/images` with how to build one again |
 | [bin/roost](bin/roost) | The dispatcher — every command above |
 | [lib/roost-secret.sh](lib/roost-secret.sh) / [lib/roost_secret.py](lib/roost_secret.py) | The one secret reader, shell and Python: vault first, the legacy file after it, and one cached document per host |
 | [bin/new-app.sh](bin/new-app.sh) | Nothing → live app: Dokku app + domain + scaffold + deploy + route + verify, and its kind file |
@@ -117,6 +124,20 @@ host once both lines say `vault`.
 | [bin/backup-ui.html](bin/backup-ui.html) | The page `roost backup --serve` presents: status, snapshot browser, extract and restore |
 | [bin/backup-status.py](bin/backup-status.py) | Reads that service from any machine: the schedule and last run on the service host, the repositories on the storage host |
 | [bin/backup-report.sh](bin/backup-report.sh) | Pushes that reading to pulse `/api/backups` for the dashboard card; hourly launchd/systemd installer alongside |
+| [bin/rollout.sh](bin/rollout.sh) | `roost rollout`. Runs on the laptop, and pulls roost and statusgen ff-only there and on every `ROOST_WRITERS` machine |
+| [bin/forge-log](bin/forge-log) | `roost forge-log`. Runs on any machine with ssh to the opi, and reads job logs from the forge database or its log store, read-only |
+| [bin/tapo-poll.py](bin/tapo-poll.py) | `roost tapo`. Reads the Tapo plugs directly or through Home Assistant, writes `~/.roost-tapo.json` for node-report, and posts to pulse `/api/tapo`. `install-tapo-poll.sh` makes it a long-running service (launchd or systemd user unit) and makes its python-kasa venv |
+| [bin/ha-scoop.py](bin/ha-scoop.py) | `roost ha-scoop`. Copies the hourly power statistics of Home Assistant into pulse. `install-ha-scoop.sh` runs it at 10 minutes past each hour (launchd or systemd user timer) |
+| [bin/volts.py](bin/volts.py) | Prints mains voltage and load from pulse `/api/history` as terminal sparklines, to match a voltage dip to its cause. Runs on any machine that reaches pulse |
+| [bin/dokku-reconcile.sh](bin/dokku-reconcile.sh) | Runs on the opi every 10 minutes (`install-dokku-reconcile.sh`, systemd user timer). Starts deployed apps that are down, names apps with no image, rebuilds the vhosts, asks each declared app its health path, and posts its readings to pulse `/api/answers` and its events to pulse `/api/events` |
+| [bin/mesh-alert.sh](bin/mesh-alert.sh) | Sends one line over LoRa through Meshtastic to `MESH_DEST`, when the network cannot carry an alert. It runs on the opi, and the reconcile alert calls it. [docs/mesh-alert-setup.md](docs/mesh-alert-setup.md) has the setup |
+| [bin/backup-watch.sh](bin/backup-watch.sh) | Runs on the opi at 08:00 (`install-backup-watch.sh`, systemd user timer). Sends an ntfy alert when the nightly backup did not write its finish stamp |
+| [bin/runner-watchdog.sh](bin/runner-watchdog.sh) | Runs on the opi every 15 minutes (`install-runner-watchdog.sh`, systemd user timer). Watches the self-hosted GitHub runners through the GitHub API, and sends an ntfy alert for a runner offline too long or a run queued too long |
+| [bin/colima-ensure.sh](bin/colima-ensure.sh) | Runs on a Mac that uses colima, every 5 minutes (`install-colima-ensure.sh`, launchd). Starts the colima VM when it is not running, so the Mac keeps its amd64 capability through Rosetta |
+| [bin/lan-cert.sh](bin/lan-cert.sh) | `roost lan-cert`. Runs on a Linux box with docker (the opi), and issues or renews a LAN name's certificate through DNS-01. `install-lan-cert.sh` runs it daily |
+| [bin/install-macmon.sh](bin/install-macmon.sh) | Installs macmon on this Mac or on another Mac over ssh, so node-report sends measured watts and temperatures. A copied binary is signed again |
+| [bin/move-containerd-to-nvme.sh](bin/move-containerd-to-nvme.sh) | A one-time step on the opi, run with sudo. Copies the containerd store to `/mnt/nvme/containerd` and bind-mounts it on `/var/lib/containerd`. Every service stops for the copy |
+| [ci/](ci/) | The forge runner config, the `swift-ci` composite action, the job image recipes in `ci/images`, and an S3 conformance probe. [ci/README.md](ci/README.md) describes them |
 | [bin/roost-ui.py](bin/roost-ui.py) | `roost ui` — full-screen terminal in five tabs: console (prompt + streaming commands), monitor (live fleet via pulse), config, docs pager, backups (status, snapshot browser, extract and restore) (stdlib only) |
 
 Each script carries its own usage/config header — the headers are the

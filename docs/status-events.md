@@ -1,8 +1,15 @@
 # Status events — push-based CI → boards → history (design sketch)
 
-> **Status: proposal / future direction. Not built.** Written 2026-07-13.
+> **Status: partly built.** Written 2026-07-13, status updated 2026-09-21.
 > A north star for unifying CI, status boards, and history — react to it, don't
 > treat it as a spec. Companion to statusgen's `INTERFACES.md`.
+>
+> Built: the ingest is a route on pulse, `POST /api/events`, with the pulse `NODE_KEY`.
+> `bin/dokku-reconcile.sh` posts to it on the opi: a boot, the apps it started, apps with no image, quarantines, restores, and apps that fail their health path.
+> pulse also writes its own alerts to the same events table.
+> An event in use has the fields `kind`, `source`, `subject`, `tone`, `message`, and optional `at` and `detail`, not the CI schema below.
+>
+> Not built: the CI package, `GET /api/state`, a statusgen collector that reads events, and history pages that read events instead of git.
 
 ## Why
 
