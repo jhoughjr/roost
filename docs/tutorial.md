@@ -127,13 +127,16 @@ roost logs demo -n 50      # what did it say?
 roost restart demo         # turn it off and on again
 ```
 
-Configuration and secrets are environment variables on the app, set the
-same way you'd read them:
+Configuration and secrets are environment variables on the app.
+roost reads them, and hatchery writes them, because hatchery keeps the declaration true:
 
 ```sh
-roost config demo                    # show
-roost config demo GREETING=hello     # set (this restarts the app)
+roost config demo                                  # show
+hatchery config set <stack> demo GREETING=hello    # set (this restarts the app)
 ```
+
+`roost config demo --force GREETING=hello` still writes directly through dokku, for an emergency.
+The declaration does not see that write, so run `hatchery config audit` after it.
 
 Two things not to learn the hard way:
 
@@ -226,13 +229,15 @@ exercises the whole pipeline without publishing anything.
 
 ```sh
 roost fleet     # regenerate the fleet board: every app, disk, memory, HTTP health
-roost ui        # full-screen terminal — console, live monitor, config, docs
+roost ui        # full-screen terminal: console, live monitor, config, docs, backups
 ```
 
-Unattended alerting is pulse's, not roost's. pulse holds every reading roost posts it, so it decides on state transitions only - an app going down, or disk crossing 85% - and tells the phone. Silence means nothing changed, which is what makes it worth having: an alert that fires every 15 minutes is one you learn to ignore.
+Most unattended alerting is pulse's. pulse holds every reading roost posts it, so it decides on state transitions only - an app going down, or disk crossing 85% - and tells the phone. Silence means nothing changed, which is what makes it worth having: an alert that fires every 15 minutes is one you learn to ignore.
 
 Set `NTFY_TOPIC` on the pulse app and the same alerts reach your
 phone.
+
+roost keeps the alerts that must not depend on pulse or the network. On the opi, `backup-watch.sh` and `runner-watchdog.sh` send ntfy alerts, and the reconcile sends a line over LoRa through `mesh-alert.sh`. Playbook §7b lists them.
 
 When the box gets tight, reclaim build artifacts — dry-run by default, so
 looking is free:
@@ -298,8 +303,7 @@ by design — one broken collector shouldn't block a deploy — so they print
 - [playbook.md](playbook.md) — persistent storage (§3), scheduled jobs
   (§4), secrets (§5), sign-in and per-app user data via vault (§6),
   backups (§7c), and the accumulated gotchas (§8).
-- `roost help` — the current command list, always accurate; the script
-  headers in `bin/` are the authoritative per-tool docs.
+- `roost help`: the command list, from the header of `bin/roost`. The script headers in `bin/` are the authoritative per-tool docs.
 - `roostrc.example` — every configuration key with a comment saying what
   it produces.
 - [statusgen](https://github.com/jhoughjr/statusgen) — board schema,

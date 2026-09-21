@@ -7,6 +7,10 @@ execs `roost-$cmd` — looked up on PATH, then in `$ROOST_STATUSGEN/bin`
 — so plugins are git-style, while every builtin still wins over a
 same-named plugin.
 
+The one exception to stdlib Python is python-kasa, which `tapo-poll.py` and `ha-scoop.py` need.
+It lives in the venv `~/.roost-tapo-venv` that `install-tapo-poll.sh` makes, and both scripts re-exec into it.
+`ci/` holds the forge CI parts: the runner config, the job image recipes in `ci/images`, and their own README.
+
 ## Where truth lives
 
 - **Script headers are the authoritative per-tool docs.** Every script in
@@ -16,6 +20,7 @@ same-named plugin.
 - `roost help` prints lines 4–22 of `bin/roost` verbatim (via `sed`). If
   you add a subcommand, add its header line **and** keep the `sed -n`
   range in the `help` case covering it.
+  The header now ends at line 24, so `roost help` does not print the `doctor` and `ui` lines.
 - `~/.roostrc` is plain `KEY=VALUE`, read through **one** reader per
   language: `bin/roost-env.sh` (sourced by every bash entrypoint) and
   `bin/roostlib.py` (imported by every Python tool). Both also hold the
@@ -67,6 +72,7 @@ python3 -m unittest discover -s tests   # from repo root
 bash -n bin/*.sh bin/roost              # what CI's lint job runs
 ```
 
-CI (`.github/workflows/check.yml`) runs on the self-hosted mini runner:
-`bash -n`, shellcheck (advisory), `py_compile`, unittest. If CI hangs
-with no runner pickup, check the runner is online before debugging.
+CI (`.github/workflows/check.yml`) runs on a self-hosted runner with the labels `self-hosted` and `arm64`, which the opi and the mini both carry.
+It runs `bash -n`, shellcheck at the warning level, `py_compile`, and unittest.
+A shellcheck warning fails the job.
+If CI hangs with no runner pickup, make sure a runner is online before you debug.

@@ -26,20 +26,19 @@ It creates the Dokku app and domain, scaffolds a repo from a template
 deploy, publishes the route via the Cloudflare API, and verifies LAN +
 public. The manual steps below remain as the reference for what it does.
 
-All toolbelt scripts read `~/.roostrc` (simple `KEY=VALUE` lines:
-`ROOST_DOKKU_HOST`, `ROOST_DOMAIN`, `ROOST_METRIC_APP`,
-`ROOST_STATUS_SITE`) so nothing is hardcoded to one person's host — copy
-`roostrc.example` from the repo and fill in yours. The `roost` command
-wraps everything — `roost help` prints the full list:
+All toolbelt scripts read `~/.roostrc` (simple `KEY=VALUE` lines, for example `ROOST_DOKKU_HOST`, `ROOST_DOMAIN`, and `ROOST_STATUS_SITE`), so nothing is hardcoded to one person's host.
+Copy `roostrc.example` from the repo and fill in yours.
+The `roost` command wraps everything.
+The header of `bin/roost` is the full list:
 
-- lifecycle: `roost new`, `roost route`
-- status site: `roost status`, `roost stats`, `roost fleet`, `roost kick`
-- day-2 Dokku ops: `roost apps`, `roost ps`, `roost logs`, `roost restart`,
-  `roost config`
+- lifecycle: `roost new`, `roost route`, `roost lan-cert`
+- status site: `roost status`, `roost stats`, `roost fleet`, `roost kick`, `roost rollout`
+- day-2 Dokku ops: `roost apps`, `roost ps`, `roost logs`, `roost restart`, and `roost config`, which reads only. `hatchery config set` writes config
+- power: `roost tapo`, `roost ha-scoop`
+- forge: `roost forge-log`
+- backups and secrets: `roost backup`, `roost secrets`
 - housekeeping: `roost prune`
-- `roost doctor` (diagnoses SSH, token, tunnel, and tooling problems —
-  run it first when anything misbehaves) and `roost ui` (full-screen
-  terminal: console, monitor, config, docs tabs)
+- `roost doctor` (diagnoses ssh, the Cloudflare token and zone, and tooling problems. Run it first when anything misbehaves) and `roost ui` (full-screen terminal: console, monitor, config, docs, and backups tabs)
 
 ```sh
 ssh dokku@192.168.0.103 apps:create <name>
@@ -128,7 +127,8 @@ copy first and falls back to the deploy-baked file.
 
 ## 5. Secrets
 
-- Runtime: `ssh dokku@… config:set <name> KEY=value` (restarts the app).
+- Runtime: `hatchery config set <stack> <name> KEY=value`, which writes the declaration and applies it.
+  A direct `ssh dokku@… config:set` also restarts the app, but the declaration does not see it, and `hatchery config audit` reports it as drift.
 - Build-time (Dockerfile ARG): `docker-options:add <name> build "--build-arg KEY=value"`
   — e.g. the blog's `GITHUB_TOKEN`.
 - Never in the repo. Local copies live in `~/.something` chmod 600
@@ -395,7 +395,7 @@ Alerting: pulse does it, every 15 minutes, from the readings roost already posts
 
 **Off-box nodes** (the CI Mac mini, a workstation, opi): `roost/bin/node-report.sh`
 POSTs the box's load/memory/watts to pulse's `/api/nodes` with the
-shared key in `~/.roost_node_key` (must match `dokku config pulse NODE_KEY`);
+shared `NODE_KEY` (must match `dokku config pulse NODE_KEY`). The host reads it from vault first and from `~/.roost_node_key` after it, as the README section "Secrets from vault" describes.
 `install-node-report.sh` wires it to launchd every 30 s — or, on Linux, to a
 systemd **user** timer (no sudo, which is what opi has). pulse serves the
 last report per node (with age) in `/api/stats`, and
@@ -411,10 +411,9 @@ Without macmon the field is omitted and the page falls back to the model
 `idleW + (maxW − idleW) × load1/cores`, badged **est**. The gap is real:
 the mini under CI load measured 17.8 W where the model said 40 W.
 
-On Linux there is no sudoless system-power sensor (the Pi-class PMIC exposes
-none), so those nodes are always **est** — set `ROOST_NODE_IDLE_W`/`MAX_W` in
-`~/.roostrc` to make the estimate honest (opi: 4 / 15, the ceiling its 5 V
-supply can actually deliver).
+On Linux there is no sudoless system-power sensor (the Pi-class PMIC exposes none).
+A Linux node reports measured watts only from a Tapo smart plug on its cord: `tapo-poll.py` writes the plug reading to `~/.roost-tapo.json`, and node-report sends it as `wattsW` with `wattsSrc: "plug"`.
+A Linux node with no plug is **est**. Set `ROOST_NODE_IDLE_W`/`MAX_W` in `~/.roostrc` to make the estimate honest (opi: 4 / 15, the ceiling its 5 V supply can actually deliver).
 
 Also reported: `power` (ac|battery) + `batteryPct` from `pmset -g batt`, or on
 Linux from `/sys/class/power_supply` — a box with no battery reads `ac`. A node
@@ -427,13 +426,14 @@ A zone takes its limits from its own passive trip points, the temperatures at wh
 
 Linux nodes also report `fanPwm` where the board drives a fan, which is the duty sysfs commands from 0 to 255. There is no tachometer on the opi, so this is what the board asks the fan to do, not a measured speed. The card warns when the fan reads 0 while a sensor is at or over its warning limit.
 
-Why it exists: on 2026-09-04 the opi's NVMe drive overheated and left the PCIe bus after 9 days of uptime. Docker keeps its `data-root` on that drive, so docker went down and took vault and forgejo with it. The drive had been moved above a router, with no heatsink and no airflow. The kernel already carries `nvme_core.default_ps_max_latency_us=0` and `pcie_aspm=off`, so the APST bug is ruled out and the cause was heat. macOS nodes send no temperatures yet.
+Why it exists: on 2026-09-04 the opi's NVMe drive overheated and left the PCIe bus after 9 days of uptime. Docker keeps its `data-root` on that drive, so docker went down and took vault and forgejo with it. The drive had been moved above a router, with no heatsink and no airflow. The kernel already carries `nvme_core.default_ps_max_latency_us=0` and `pcie_aspm=off`, so the APST bug is ruled out and the cause was heat.
+
+macOS nodes with macmon send the CPU and GPU temperatures from the same macmon sample as the watts, with a warning limit of 95 C and a critical limit of 105 C. A Mac with a battery also sends the battery temperature from `ioreg`, with or without macmon, with a warning limit of 40 C and a critical limit of 45 C. A desktop Mac without macmon sends no temperatures.
 
 Putting a new box on the meter:
 
-1. copy `~/.roost_node_key` from the workstation (chmod 600)
-2. `brew install macmon` — skip on Intel and on Linux; the node then reports
-   estimates
+1. give the box its `NODE_KEY`: set the three `ROOST_VAULT_*` keys in its `~/.roostrc`, or copy `~/.roost_node_key` from the workstation (chmod 600). `roost secrets` says which one answers
+2. run `roost/bin/install-macmon.sh` (or `install-macmon.sh user@host` from another Mac). Skip it on Intel and on Linux, where the node reports estimates or plug watts
 3. set `ROOST_NODE_NAME=<name>` in `~/.roostrc` — the default name comes
    from ComputerName (Linux: hostname) and the sanitizer turns curly
    apostrophes into dashes ("Jimmy's MacBook Air" → `jimmy---s-macbook-air`)
@@ -449,18 +449,26 @@ pulse keeps nodes in memory only — after a rename or a stale ghost,
 POSTs in-progress/queued GitHub Actions runs (via `gh`) to the ci-live
 app's `/api/runs`, which the boards' live console renders. Config:
 `ROOST_CI_LIVE_REPOS` (`owner/repo:project:intervalSec`, comma-separated)
-and `ROOST_CI_LIVE_ENDPOINT` in `~/.roostrc`; the shared POST key lives
-in `~/.roost_ci_key` (chmod 600, matching `dokku config ci-live CI_KEY`).
+and `ROOST_CI_LIVE_ENDPOINT` in `~/.roostrc`. The shared POST key is `CI_KEY`, read from vault first and from `~/.roost_ci_key` after it, and it must match `dokku config ci-live CI_KEY`.
 `install-ci-live-report.sh` wires it to launchd
 (`net.jimmyhoughjr.roost-ci-live`, every 20 s) with Homebrew on PATH so
 the poller finds `gh`/`jq`.
 
-The host Pi itself (Orange Pi 5 Plus, RK3588): pulse already self-reports
-its load/memory from /proc, but the SoC exposes **no power sensor** —
-tools like rktop read utilization/frequencies/temps from sysfs, not watts
-(verified against its README 2026-07-10). The Pi's draw stays modeled
-unless a metering smart plug with a local API (Shelly Plug US, Tasmota)
-is put on its cord and polled.
+The host Pi itself (Orange Pi 5 Plus, RK3588): pulse already self-reports its load/memory from /proc, but the SoC exposes **no power sensor**.
+Tools like rktop read utilization/frequencies/temps from sysfs, not watts (verified against its README 2026-07-10).
+The opi's watts come from the Tapo plug `ROOST_TAPO_FLEET` names (default `opi`), through `tapo-poll.py` and its cache.
+
+**Tapo plugs and Home Assistant.** `roost tapo` (`bin/tapo-poll.py`) reads every plug in `ROOST_TAPO_DEVICES` over the local KLAP API, or through Home Assistant for a plug named in `ROOST_HA_TAPO`.
+It posts the whole set to pulse `/api/tapo`, and `install-tapo-poll.sh` runs it as one long-running `--watch` process.
+`roost ha-scoop` (`bin/ha-scoop.py`) copies the hourly power statistics of Home Assistant into pulse, tagged `src:"ha"`, and fills only hours with no sampled data.
+`install-ha-scoop.sh` runs it at 10 minutes past each hour.
+`bin/volts.py [hours]` prints the mains voltage and load from pulse `/api/history` as sparklines, to match a dip to its cause.
+
+**Watchdogs on the opi.** Each one is a systemd user timer, so linger must be on.
+
+- `dokku-reconcile.sh`, every 10 minutes: starts deployed apps that are down, names apps with no image, rebuilds the vhosts, and asks each declared app its health path. It posts to pulse `/api/answers` and `/api/events`. When it finds a thing it cannot fix, `dokku-reconcile-alert.service` sends the line through `mesh-alert.sh` over LoRa. [mesh-alert-setup.md](mesh-alert-setup.md) has the radio setup.
+- `backup-watch.sh`, at 08:00: sends an ntfy alert when the nightly backup wrote no finish stamp.
+- `runner-watchdog.sh`, every 15 minutes: watches the self-hosted GitHub runners through the GitHub API, and sends an ntfy alert for a runner offline too long or a run queued too long.
 
 **Watts history (added 2026-07-10).** pulse samples once a minute to its
 persistent mount (`dokku storage:mount pulse
@@ -627,13 +635,18 @@ output fills the disk — `roost prune --deep` there surfaced 14 GB.
 | GitHub build token | `dokku docker-options blog` build-arg | portfolio build-time API calls | github.com/settings/tokens, re-add docker-option |
 | vault SESSION_SECRET | `dokku config vault` | session cookie HMAC | `config:set` new random hex (logs everyone out) |
 | vault OAuth creds | `dokku config vault` | GitHub/Google/Apple sign-in (§6) | provider consoles |
-| pulse NODE_KEY | `~/.roost_node_key` (600, per node) + `dokku config pulse NODE_KEY` | node-report.sh → pulse `/api/nodes` | `config:set` new random hex, update each node's file |
+| pulse NODE_KEY | vault document `roost-<node>`, or `~/.roost_node_key` (600, per node), + `dokku config pulse NODE_KEY` | node-report.sh → pulse `/api/nodes`, and the other pulse posts | `config:set` new random hex, then update vault or each node's file |
 | pulse CF_API_TOKEN (+ CF_ACCOUNT_ID) | `dokku config pulse` | tunnel status/colos on `/map` (`tunnel.cf`) | dash.cloudflare.com → API Tokens (Account → Cloudflare Tunnel → Read), then `config:set` |
-| ci-live CI_KEY | `~/.roost_ci_key` (600, on the CI Mac) + `dokku config ci-live CI_KEY` | ci-live-report.sh → ci-live `/api/runs` | `config:set` new random hex, update the poller Mac's file |
+| ci-live CI_KEY | vault document `roost-<node>`, or `~/.roost_ci_key` (600, on the CI Mac), + `dokku config ci-live CI_KEY` | ci-live-report.sh → ci-live `/api/runs` | `config:set` new random hex, then update vault or the poller Mac's file |
+| vault app key | `ROOST_VAULT_APP_KEY` in `~/.roostrc` (per host) | `lib/roost-secret.sh`, `lib/roost_secret.py` | vault admin, then the host's `~/.roostrc` |
+| Home Assistant token | `~/.ha_token` (600) | `ha-scoop.py`, the HA path of `tapo-poll.py` | HA Profile → Security |
+| TP-Link account password | `~/.tapo_pass` (600) | `tapo-poll.py` | the TP-Link account |
 
 Never commit any of these; `rates.json` and other derived data are public.
 
 ## 9. The roost (current fleet)
+
+This table lists the apps this playbook uses as examples. hatchery's declaration lists every app on the box.
 
 | App | What | Repo |
 |---|---|---|
