@@ -6,6 +6,8 @@
 # jemalloc is here because the release link passes `-Xlinker -ljemalloc`, and the workflow installs it in a `run:` step today.
 # The docker client is here because the runner mounts its socket into the job, and only the client is needed on this side.
 #
+# python3 is here because hatchery's page check runs a python script, and the image the box held before 2026-09-21 carried it while this recipe did not.
+#
 # Carrying all three removes two `run:` steps that reach an apt mirror on every build, which is the same class of outside dependency the action mirror removes.
 FROM swift:6.3.2-noble
 
@@ -17,6 +19,7 @@ RUN apt-get update \
       curl \
       libjemalloc-dev \
       docker.io \
+      python3 \
  && rm -rf /var/lib/apt/lists/*
 
-RUN node --version && swift --version && docker --version
+RUN node --version && swift --version && docker --version && python3 --version
