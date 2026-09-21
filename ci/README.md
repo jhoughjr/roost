@@ -39,7 +39,8 @@ A `run:` step reaches wherever it likes, and no forge setting governs that. A st
 |---|---|---|---|
 | `roost-ci:arm64` | `node:22-bookworm` | shellcheck, git, curl, python3 | shell and script workflows |
 | `roost-swift-ci:6.1-noble` | `swift:6.1-noble` | node, git, curl | vault |
-| `roost-swift-ci:6.3` | `swift:6.3` | node, git, curl | swift-pdf-builder |
+| `roost-swift-ci:6.3.2-noble` | `swift:6.3.2-noble` | node, git, curl, python3, jemalloc, the docker client | hatchery, swift-pdf-builder |
+| `roost-swift-ci:6.3` | `swift:6.3` | node, git, curl | none now, and the box does not hold it |
 
 Build one with:
 
@@ -48,6 +49,8 @@ docker build -t roost-ci:arm64 ci/images/roost-ci
 ```
 
 A Swift image tag matches the tag the project's own Dockerfile builds with, so a gate tests the toolchain that deploys.
+
+These images are built on the box and live nowhere else, so a move or a loss of the image store takes them with it. On 2026-09-21 the move of containerd's store to the NVMe did, and every job failed at the pull with `pull access denied`. Build each one again from its recipe here. A recipe with no `COPY` builds from a terminal on any host: `ssh jimmy@192.168.0.103 'docker build -t <tag> -' < ci/images/<dir>/Dockerfile`.
 
 ## The runner
 
