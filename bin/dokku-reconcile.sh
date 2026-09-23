@@ -61,7 +61,11 @@ dok() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$DOKKU" "$@" 2>&1; }
 # box that has never seen one reports dokku's containers alone.
 DECLARED_CACHE="$HOME/.roost-reconcile-declared.json"
 declared_file=""
-if curl -sf -m 15 "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
+# The declaration answers a node key since 2026-09-23. The header travels in a file, so the key stays out of the process list.
+DECLARED_KEY="$(roost_secret NODE_KEY || true)"
+DECLARED_HDR="$(mktemp)"
+printf 'x-roost-node-key: %s\n' "$DECLARED_KEY" > "$DECLARED_HDR"
+if curl -sf -m 15 -H @"$DECLARED_HDR" "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
   mv -f "$DECLARED_CACHE.new" "$DECLARED_CACHE"
   declared_file="$DECLARED_CACHE"
 elif [ -f "$DECLARED_CACHE" ]; then
@@ -70,7 +74,7 @@ elif [ -f "$DECLARED_CACHE" ]; then
 else
   say "  declared: pulse did not answer and none is cached, so only dokku's containers are reported"
 fi
-rm -f "$DECLARED_CACHE.new"
+rm -f "$DECLARED_HDR" "$DECLARED_CACHE.new"
 
 # One line of `name state` per container the declaration names for this box.
 # One reader, so the summary line below and the reading posted to pulse cannot

@@ -405,10 +405,13 @@ JOBS_JSON=""
 if [ "$(uname -s)" = "Darwin" ]; then
   DECLARED_CACHE="$HOME/.roost-node-declared.json"
   if [ ! -f "$DECLARED_CACHE" ] || [ -n "$(find "$DECLARED_CACHE" -mmin +60 2>/dev/null || true)" ]; then
-    if curl -sf -m 10 "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
+    # The declaration answers a node key since 2026-09-23. The header travels in a file, so the key stays out of the process list.
+    DECLARED_HDR="$(mktemp)"
+    printf 'x-roost-node-key: %s\n' "$KEY" > "$DECLARED_HDR"
+    if curl -sf -m 10 -H @"$DECLARED_HDR" "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
       mv -f "$DECLARED_CACHE.new" "$DECLARED_CACHE"
     fi
-    rm -f "$DECLARED_CACHE.new"
+    rm -f "$DECLARED_CACHE.new" "$DECLARED_HDR"
   fi
 
   # One `label name keepAlive` line per job the declaration names for this Mac.

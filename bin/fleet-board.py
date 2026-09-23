@@ -19,7 +19,9 @@ Usage: fleet-board.py [output-path]   (default: ~/status-site/fleet/board.json)
 import concurrent.futures, json, os, subprocess, sys, urllib.error, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import roostlib  # noqa: E402
+from roost_secret import roost_secret  # noqa: E402
 
 _RC = roostlib.read_rc()
 DOMAIN = roostlib.rc("ROOST_DOMAIN")
@@ -37,7 +39,12 @@ for pair in _RC.get("ROOST_EXPECTED_HTTP", "").split(","):
 
 def fetch(path):
     """One document from pulse. A failure is raised, because a board drawn from half an answer is worse than yesterday's board."""
-    request = urllib.request.Request(PULSE + path, headers={"User-Agent": "roost-fleet-board"})
+    headers = {"User-Agent": "roost-fleet-board"}
+    # The declaration answers a node key since 2026-09-23. The other readings stay public and the header does them no harm.
+    key = roost_secret("NODE_KEY")
+    if key:
+        headers["x-roost-node-key"] = key
+    request = urllib.request.Request(PULSE + path, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as answer:
         return json.loads(answer.read())
 
