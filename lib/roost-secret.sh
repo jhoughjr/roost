@@ -44,7 +44,12 @@ _roost_secret_rc() { # _roost_secret_rc NAME [DEFAULT] - the environment first, 
 }
 
 _roost_secret_mtime() { # _roost_secret_mtime FILE - the epoch second of the last write, in both stat dialects.
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+  # GNU first: on Linux `stat -f %m` succeeds and prints a file-system line, which is not a number.
+  # On a Mac `stat -c` fails and the BSD form answers. A value that is not digits reads as no cache.
+  local when
+  when="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
+  case "$when" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$when"
 }
 
 _roost_secret_tmpfile() { # _roost_secret_tmpfile PREFIX - a private file in TMPDIR, mode 600 before anything is written to it.
