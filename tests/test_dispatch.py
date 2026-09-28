@@ -114,7 +114,7 @@ class EnvDefaultsTest(DispatchFixture):
 
     def test_defaults_apply_with_no_rc(self):
         dokku, domain, runner = self.source_env()
-        self.assertEqual(dokku, "dokku@192.168.0.103")
+        self.assertEqual(dokku, "dokku@opi.jimmyhoughjr.net")
         self.assertEqual(domain, "jimmyhoughjr.net")
         self.assertTrue(runner)
 

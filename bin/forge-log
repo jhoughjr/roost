@@ -18,7 +18,7 @@ BIN="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=/dev/null
 . "$BIN/roost-env.sh" 2>/dev/null || true
 
-BOX="${ROOST_FORGE_BOX:-jimmy@192.168.0.103}"
+BOX="${ROOST_FORGE_BOX:-jimmy@opi.jimmyhoughjr.net}"
 APP="${ROOST_FORGE_APP:-forgejo}"
 DB="${ROOST_FORGE_DB:-/data/forgejo/forgejo.db}"
 # Where the forge's artifact store lands on the box. The forge writes to vault's S3

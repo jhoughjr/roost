@@ -22,7 +22,7 @@ RC_PATH = os.path.expanduser("~/.roostrc")
 # Fallbacks when ~/.roostrc doesn't say. roost#10 wants these gone entirely;
 # until then they are at least in one file instead of five.
 DEFAULTS = {
-    "ROOST_DOKKU_HOST": "dokku@192.168.0.103",
+    "ROOST_DOKKU_HOST": "dokku@opi.jimmyhoughjr.net",
     "ROOST_DOMAIN": "jimmyhoughjr.net",
     "ROOST_PULSE_URL": "https://pulse.jimmyhoughjr.net",
 }

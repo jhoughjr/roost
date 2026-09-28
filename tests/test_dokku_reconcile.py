@@ -39,7 +39,7 @@ DECLARED = {
     "stacks": [
         {
             "name": "estate", "backend": "dokku", "environment": "prod",
-            "host": "dokku@192.168.0.103", "manifest": "/infra-state/estate/hatchery.json",
+            "host": "dokku@opi.jimmyhoughjr.net", "manifest": "/infra-state/estate/hatchery.json",
             "services": [
                 {"name": "status", "kind": "status", "image": "dokku/status:latest",
                  "domains": ["status.opi"], "healthPath": "/", "findings": []},
@@ -47,7 +47,7 @@ DECLARED = {
         },
         {
             "name": "box", "backend": "host", "environment": "prod",
-            "host": "jimmy@192.168.0.103", "manifest": "/infra-state/estate/hatchery.json",
+            "host": "jimmy@opi.jimmyhoughjr.net", "manifest": "/infra-state/estate/hatchery.json",
             "services": [
                 {"name": "lan-dns", "kind": "container", "image": "4km3/dnsmasq:latest",
                  "domains": [], "restart": "unless-stopped", "findings": [], "databases": []},

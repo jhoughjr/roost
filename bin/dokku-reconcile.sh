@@ -39,6 +39,10 @@
 # when. This pass never starts one either.
 set -uo pipefail
 
+# The names and addresses this box answers to, in the form a declared stack writes its host.
+# Since house#25 a stack names the opi by its public name, so an address list alone would disown every stack on this box.
+BOX_NAMES="127.0.0.1 localhost ${ROOST_BOX_NAME:-opi.jimmyhoughjr.net} $(hostname -I 2>/dev/null || true)"
+
 # Safe to source: the secret reader reads ~/.roostrc key by key and never sources it, so that file
 # cannot set a variable in this script, and this script decides what gets restarted.
 # The repo keeps lib/ beside bin/, and the installed copy keeps its own lib/ inside the
@@ -114,7 +118,7 @@ for stack in declared.get("stacks", []):
             print(name, states.get(name, "absent"))
 ' "$declared_file" \
   "$(docker ps -a --format '{{.Names}} {{.State}}' || true)" \
-  "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
+  "$BOX_NAMES")
 
 # The jobs the declaration names for this box, one per line with its unit type.
 #
@@ -151,7 +155,7 @@ for stack in declared.get("stacks", []):
             scheduled = bool(service.get("schedule"))
             unit_type = "timer" if scheduled and not keep_alive else "service"
             print(f"{name}|{unit_type}")
-' "$declared_file" "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
+' "$declared_file" "$BOX_NAMES")
 
 # What systemd says about each of them, as `name|state|exit|when`.
 #
@@ -461,7 +465,7 @@ for stack in declared.get("stacks", []):
         if name and path and domains:
             print("%s|%s|%s" % (name, path, " ".join(domains)))
 ' "$declared_file" \
-  "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)")
+  "$BOX_NAMES")
 
 # The code the app gives at its declared path, over the same two ports the serving probe uses.
 probe_health() {
@@ -560,7 +564,7 @@ for stack in declared.get("stacks", []):
                 if db_name:
                     print(f"{name}/{db_name} unreachable")
 ' "$declared_file" \
-  "127.0.0.1 localhost $(hostname -I 2>/dev/null || true)" \
+  "$BOX_NAMES" \
   "$(docker ps -a --format '{{.Names}} {{.State}}' || true)")
 
 say "dokku-reconcile: $checked apps, $started started, $imageless with no image, $unserved not served"

@@ -46,7 +46,7 @@ DECLARED = {
         },
         {
             "name": "opi-jobs", "backend": "host", "environment": "prod",
-            "host": "jimmy@192.168.0.103", "manifest": "/infra-state/estate/hatchery.json",
+            "host": "jimmy@opi.jimmyhoughjr.net", "manifest": "/infra-state/estate/hatchery.json",
             "services": [
                 {"name": "dokku-reconcile", "kind": "job", "image": "", "domains": [],
                  "schedule": "*:0/10", "keepAlive": False, "platform": "linux", "findings": []},

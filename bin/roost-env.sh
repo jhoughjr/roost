@@ -7,7 +7,7 @@
 # fills gaps.
 # shellcheck source=/dev/null
 [ -f "$HOME/.roostrc" ] && . "$HOME/.roostrc"
-: "${ROOST_DOKKU_HOST:=dokku@192.168.0.103}"
+: "${ROOST_DOKKU_HOST:=dokku@opi.jimmyhoughjr.net}"
 : "${ROOST_DOMAIN:=jimmyhoughjr.net}"
 : "${ROOST_STATUS_RUNNER:=jimmyhoughjr@jimmys-mac-mini.local}"
 : "${ROOST_STATUS_AGENT:=net.jimmyhoughjr.roost-status}"
