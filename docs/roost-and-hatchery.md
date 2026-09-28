@@ -7,6 +7,10 @@ from hatchery's own README:
 
 > roost owns machines; hatchery owns the stacks that hatch on them.
 
+**Measured against the box on 2026-09-28.** The box is the truth and this page
+is a hint about it, so it carries the date it was last checked. If that date is
+old, run `house-check <app>` and believe the output over this page.
+
 That sentence is easy to agree with and hard to apply while you are standing in
 front of a broken deploy deciding which tool to reach for. Both can put a Dokku
 app on a box. One box carries an app roost deployed **and** six services
@@ -99,23 +103,27 @@ the box it administers means a restart of that stack kills the tool mid-action,
 and the moment you most need it, box wedged and apps down, is exactly the moment
 it would not be there.
 
-So it is a local process. On this lab it runs on the laptop at
-`192.168.0.162:7878`, bound to loopback and token-gated, and the mini's status
-collector reaches it across the LAN to draw the Stacks tab on the board.
+So it is a local process. On this lab it runs on the laptop, bound to loopback
+and token-gated, and the mini's status collector reaches it across the LAN to
+draw the Stacks tab on the board.
+
+It is also declared, which is the point rather than a contradiction: `hatchery-serve`
+is a `job` in the `air` stack, and it fetches its own token from vault at boot.
+Staying outside what it manages is about the blast radius of a restart, not
+about escaping the declaration.
 
 ## Where the seam is
 
-The two meet on one box. `192.168.0.103` (opi) carries the `status` app that
-roost deploys **and** the `mwlab` / `mwlab-2` stacks that hatchery declares.
-Same Dokku, two different stories about how something got there.
+The two meet on one box. `opi.jimmyhoughjr.net` carries the whole declared
+estate, and that now includes the `status` app and this docs site.
 
 ```
-  the writers                             opi · 192.168.0.103 · dokku
+  the writers                             opi.jimmyhoughjr.net · dokku
                                         ┌──────────────────────────────────┐
-  hatchery serve                        │                                  │
-  laptop · :7878  ──declares · audits──▶│  mwlab · paylab · comlab         │
-       │                                │  mwlab-2 · ...                   │
-       │ LAN, curl                      │                                  │
+  hatchery                              │  the estate stack, declared:     │
+  air · declared job  ──declares───────▶│  coop · pulse · rookery · vault  │
+       │              · audits          │  status · docs · gigs · ci-live  │
+       │ LAN, curl                      │  mwlab · mwlab-2 · forge         │
        ▼                                │                                  │
   statusgen collectors ◀── GitHub       │                                  │
   mini · every 900s        Actions      │                                  │
@@ -127,21 +135,30 @@ Same Dokku, two different stories about how something got there.
                                         └──────────────────────────────────┘
 ```
 
-Read the two paths into opi and the gap states itself. The lab stacks arrive
-from a declaration that can be validated before the fact and audited after it.
-The status app arrives from a shell script that pushes.
+**The declaration half of this gap closed on 2026-09-08.** `status` and `docs`
+are services in the `estate` stack (`estate/status.tf`, `estate/docs.tf`), each
+with a kind, a config file and expected domains. So `hatchery config audit`
+answers for them like any other service, and `house-check status` reads the box
+against the declaration and exits non-zero when the two disagree.
 
-Concretely, for the `status` app:
+**What did not close is delivery.** roost still publishes the board exactly as
+it always has: collect, validate the data, commit, and force-push to dokku in a
+retry loop (`bin/status.sh`). So, for the `status` app today:
 
-- Nothing declares what it should be, so nothing can audit whether it still is.
-- Nothing validates its configuration before the push.
-- `validate-board.py` checks the board **data** and says nothing about the deployment.
-- The push is a forced one in a retry loop, because the mini's LAN access flaps.
+- What it should be is declared, and drift against it is auditable.
+- How a new board gets there is still a shell script pushing a branch.
+- `validate-board.py` gates the board **data**, and says nothing about the deployment.
+- The push is forced, and in a retry loop, because the mini's LAN access flaps.
 
-**Ruled: later.** roost predates hatchery, the status pipeline works, and
-rewriting a working pipeline to make a diagram symmetrical is not a reason.
-Written down so the next person to look knows the gap is known rather than
-missed.
+That is the honest shape of it now: **hatchery owns what the status app is,
+roost still owns how it changes.**
+
+The named next step is not to make the diagram symmetrical. It is that every
+status push rebuilds the app image, because the board data lives inside the
+image, while the code changes at most daily and the data changes every cycle.
+Separating them, so the container serves data from a mounted or synced
+directory and an image build happens only when the renderer changes, is the
+piece worth doing.
 
 ## Which tool do I reach for
 
@@ -154,6 +171,7 @@ missed.
 | The status board is stale or wrong | `roost status` |
 | A service needs an env key and you do not know which | `hatchery config validate` |
 | The live box may have drifted from what was declared | `hatchery config audit` |
+| You are about to change an app and want the before and after | `house-check <app>` |
 | You need this stack again in another environment | `hatchery stack clone` |
 | Something is down and you want the history of when it turned | `hatchery events` |
 | You are starting from an empty directory and a bare box | `hatchery stack new` |
