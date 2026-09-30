@@ -19,6 +19,7 @@ Settings, from the environment, which the job's declaration carries:
     BOX_WATCH_STACKS     the declared stacks this box checks itself, comma separated
     BOX_WATCH_PULSE      where the view is posted                      (default https://pulse.jimmyhoughjr.net)
     BOX_WATCH_MESH       a command that says one line over the mesh, on the box that has the radio
+    BOX_WATCH_MESH_ENV   the env file that holds the radio's settings, such as MESH_DEST
     BOX_WATCH_STATE      where the view and the alert record are kept  (default ~/.local/state/box-watch)
 
 Files it reads, each optional but the first:
@@ -217,11 +218,24 @@ def say(title: str, message: str) -> list[str]:
 
 
 def mesh(line: str) -> bool:
+    """One line over the mesh radio. The radio's settings come from the env file the mesh alert's own unit reads,
+    named by BOX_WATCH_MESH_ENV, so the destination is kept in one place."""
     command = os.environ.get("BOX_WATCH_MESH", "")
     if not command:
         return False
-    code, _ = run([os.path.expanduser(command), line], timeout=90)
-    return code == 0
+    env = dict(os.environ)
+    try:
+        for entry in Path(os.environ.get("BOX_WATCH_MESH_ENV", "")).expanduser().read_text().splitlines():
+            key, sep, value = entry.strip().partition("=")
+            if sep and key and not key.startswith("#"):
+                env[key] = value.strip().strip('"')
+    except OSError:
+        pass
+    try:
+        done = subprocess.run([os.path.expanduser(command), line], capture_output=True, text=True, timeout=90, env=env)
+        return done.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 # MARK: the watcher
