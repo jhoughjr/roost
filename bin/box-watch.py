@@ -118,11 +118,35 @@ def alerter(votes: dict[str, str]) -> str | None:
 
 # MARK: this box's own services
 
-def declared_services(stacks: list[str]) -> list[dict]:
-    """The services the declaration names for this box's stacks, from the node report's cache."""
+def declared_document() -> dict:
+    """The declaration: the node report's cache where the box keeps one, and else this watcher's own copy, which it
+    fetches from pulse with the node key once an hour. The copy is what answers while pulse is down."""
     try:
-        document = json.loads(DECLARED.read_text())
+        return json.loads(DECLARED.read_text())
     except (OSError, ValueError):
+        pass
+    own = STATE / "declared.json"
+    fresh = own.is_file() and time.time() - own.stat().st_mtime < 3600
+    if not fresh:
+        try:
+            key = KEY_FILE.read_text().strip()
+            request = urllib.request.Request(f"{PULSE}/api/declared", headers={"x-roost-node-key": key, "User-Agent": "box-watch/1"})
+            body = urllib.request.urlopen(request, timeout=15).read()
+            json.loads(body)
+            STATE.mkdir(parents=True, exist_ok=True)
+            own.write_bytes(body)
+        except (urllib.error.URLError, OSError, ValueError):
+            pass
+    try:
+        return json.loads(own.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def declared_services(stacks: list[str]) -> list[dict]:
+    """The services the declaration names for this box's stacks."""
+    document = declared_document()
+    if not document:
         return []
     found = []
     for stack in document.get("stacks", []):
@@ -247,6 +271,9 @@ class Watcher:
         self.stacks = stacks
         self.key = KEY_FILE.read_text().strip() if KEY_FILE.is_file() else ""
         self.last_answer: dict[str, float] = {}
+        # A peer never heard from is given the same grace as one that stopped, counted from this watcher's own start,
+        # or a box that starts first calls every other box down. On 2026-09-30 the mini did that to the opi.
+        self.started = time.time()
         self.documents: dict[str, dict] = {}
         self.lock = threading.Lock()
         self.view: dict = {"voter": name, "at": now_iso(), "intervalS": INTERVAL, "peers": {}, "self": {"services": [], "checkedAt": now_iso()},
@@ -278,7 +305,7 @@ class Watcher:
                 # A peer that does not answer keeps no say in the votes on others.
                 self.documents.pop(peer, None)
             last = self.last_answer.get(peer)
-            seen[peer] = {"state": peer_state(document is not None, last, now, INTERVAL),
+            seen[peer] = {"state": peer_state(document is not None, last if last is not None else self.started, now, INTERVAL),
                           "lastAnswer": datetime.fromtimestamp(last, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if last else None,
                           "latencyMs": latency}
         services = check_self(self.stacks)

@@ -79,6 +79,8 @@ class TwoWatchersTest(unittest.TestCase):
                         pass
                     time.sleep(0.5)
                 seen = self.view(19311, "k")
+                # A watcher that starts alone gives its peer the grace of three intervals, so nothing was called down.
+                self.assertNotEqual(json.load(open(os.path.join(home, "state", "said.json"))).get("b"), "down")
                 self.assertEqual(seen["voter"], "a")
                 self.assertEqual(seen["intervalS"], 1)
                 self.assertEqual(seen["peers"]["b"]["state"], "up")
