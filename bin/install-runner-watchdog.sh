@@ -15,6 +15,9 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 
 install -d "$DEST" "$UNITS"
 install -m 755 "$SRC/runner-watchdog.sh" "$DEST/runner-watchdog.sh"
+# The script sends its token through the header helper, so the reader travels with it, as it does for the reconcile.
+install -d "$DEST/lib"
+install -m 644 "$SRC/../lib/roost-secret.sh" "$DEST/lib/roost-secret.sh"
 
 cat > "$UNITS/phoenix-runner-watchdog.service" <<'UNIT'
 [Unit]

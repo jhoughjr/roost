@@ -23,6 +23,8 @@
 # would put that decision back in the rc's hands. A script that did source the rc already carries
 # these three keys in its environment, so the rc still wins there.
 #
+# `roost_curl_header NAME VALUE CURL-ARGS...` runs curl with one secret header, which it reads from a private file.
+#
 # The app key travels in a curl header file, so it never reaches a command line. The document is
 # cached for 300 seconds under TMPDIR at mode 600: node-report runs every 30 seconds, and a read per
 # run is ten vault calls a minute from every host.
@@ -164,3 +166,16 @@ roost_secret_source() { # roost_secret_source NAME - which arm answers for NAME:
   fi
   printf 'none\n'
 }
+
+roost_curl_header() ( # roost_curl_header NAME VALUE CURL-ARGS... - curl with the header NAME: VALUE read from a private file.
+  # Every account on a host can read the argv of every process, and `-H "NAME: VALUE"` put a key there.
+  # A ps capture on the mini on 2026-09-30 caught the CI key from ci-live-report.sh three times a minute.
+  # printf is a bash builtin, so VALUE reaches the mode 600 file and no process argv.
+  # The body is a subshell, so the trap that removes the file stays out of the caller's traps.
+  hdr="$(_roost_secret_tmpfile roost-hdr)" || exit 1
+  trap 'rm -f "$hdr"' EXIT
+  trap 'exit 1' HUP INT TERM
+  printf '%s: %s\n' "$1" "$2" > "$hdr"
+  shift 2
+  curl -H "@$hdr" "$@"
+)

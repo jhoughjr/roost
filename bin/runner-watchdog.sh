@@ -41,6 +41,13 @@ if [ -r "$ENV_FILE" ]; then
   . "$ENV_FILE"
 fi
 
+# The installed copy keeps its own lib/ beside it, and the repo keeps lib/ beside bin/.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+LIB="$HERE/lib"
+[ -f "$LIB/roost-secret.sh" ] || LIB="$HERE/../lib"
+# shellcheck source=/dev/null
+. "$LIB/roost-secret.sh"
+
 roostrc_get() { grep "^$1=" "$HOME/.roostrc" 2>/dev/null | cut -d= -f2- || true; }
 cfg() { # cfg NAME default  — env wins, then .roostrc, then default
   local v="${!1:-}"
@@ -71,8 +78,7 @@ NOW="$(date +%s)"
 
 api() { # api <path> -> JSON on stdout, non-zero on HTTP error
   local path="$1" out code
-  out="$(curl -sS -w $'\n%{http_code}' \
-    -H "Authorization: Bearer $TOKEN" \
+  out="$(roost_curl_header Authorization "Bearer $TOKEN" -sS -w $'\n%{http_code}' \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "https://api.github.com/repos/$REPO$path" 2>&1)" || { echo "$out" >&2; return 1; }

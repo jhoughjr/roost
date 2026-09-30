@@ -80,8 +80,7 @@ push_project() {
   body=$(jq -n --arg project "$project" --argjson lines "$lines" \
     --argjson intervalMs "$(( interval * 1000 ))" \
     '{project: $project, lines: $lines, intervalMs: $intervalMs}')
-  code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST "$ENDPOINT/api/runs" \
-    -H "x-roost-ci-key: $KEY" \
+  code=$(roost_curl_header x-roost-ci-key "$KEY" -s -o /dev/null -w '%{http_code}' -m 10 -X POST "$ENDPOINT/api/runs" \
     -H "content-type: application/json" \
     -d "$body") || code=000
   n=$(jq 'length' <<< "$lines")

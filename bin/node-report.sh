@@ -405,13 +405,11 @@ JOBS_JSON=""
 if [ "$(uname -s)" = "Darwin" ]; then
   DECLARED_CACHE="$HOME/.roost-node-declared.json"
   if [ ! -f "$DECLARED_CACHE" ] || [ -n "$(find "$DECLARED_CACHE" -mmin +60 2>/dev/null || true)" ]; then
-    # The declaration answers a node key since 2026-09-23. The header travels in a file, so the key stays out of the process list.
-    DECLARED_HDR="$(mktemp)"
-    printf 'x-roost-node-key: %s\n' "$KEY" > "$DECLARED_HDR"
-    if curl -sf -m 10 -H @"$DECLARED_HDR" "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
+    # The declaration answers a node key since 2026-09-23.
+    if roost_curl_header x-roost-node-key "$KEY" -sf -m 10 "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
       mv -f "$DECLARED_CACHE.new" "$DECLARED_CACHE"
     fi
-    rm -f "$DECLARED_CACHE.new" "$DECLARED_HDR"
+    rm -f "$DECLARED_CACHE.new"
   fi
 
   # One `label name keepAlive` line per job the declaration names for this Mac.
@@ -496,8 +494,7 @@ if [ "${RUNNERS:-0}" -gt 0 ] || [ "$RUNNER_INSTALLED" = 1 ]; then
   RUNNER_JSON=",\"runners\":$RUNNERS,\"runnersBusy\":${BUSY:-0}"
 fi
 
-curl -sf -m 10 -X POST "$PULSE/api/nodes" \
-  -H "x-roost-node-key: $KEY" \
+roost_curl_header x-roost-node-key "$KEY" -sf -m 10 -X POST "$PULSE/api/nodes" \
   -H "content-type: application/json" \
   -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON$TEMP_JSON$JOBS_JSON}" \
   > /dev/null

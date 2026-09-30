@@ -33,9 +33,8 @@ PULSE=${ROOST_PULSE_URL:-https://pulse.jimmyhoughjr.net}
 READING="$(python3 "$BIN/backup-status.py" --json || true)"
 [ -n "$READING" ] || { echo "backup-report: backup-status.py returned nothing" >&2; exit 1; }
 
-curl -sf -m 20 -X POST "$PULSE/api/backups" \
+roost_curl_header x-roost-node-key "$KEY" -sf -m 20 -X POST "$PULSE/api/backups" \
   -H "content-type: application/json" \
-  -H "x-roost-node-key: $KEY" \
   --data "$READING" > /dev/null
 
 echo "backup-report: pushed to $PULSE"

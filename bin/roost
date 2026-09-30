@@ -137,10 +137,12 @@ case "$cmd" in
     if [ -z "$TOKEN" ]; then
       say "cloudflare token" "✗ ~/.cf_api_token missing (see playbook §1)"; fail=1
     else
-      verify=$(curl -s -m 10 -H "Authorization: Bearer $TOKEN" \
+      # shellcheck source=/dev/null
+      . "$BIN/../lib/roost-secret.sh"
+      verify=$(roost_curl_header Authorization "Bearer $TOKEN" -s -m 10 \
         https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -o '"status":"active"' || true)
       if [ -n "$verify" ]; then say "cloudflare token" "✓ active"; else say "cloudflare token" "✗ invalid/expired"; fail=1; fi
-      zone=$(curl -s -m 10 -H "Authorization: Bearer $TOKEN" \
+      zone=$(roost_curl_header Authorization "Bearer $TOKEN" -s -m 10 \
         "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" 2>/dev/null | grep -o '"name":"'"$DOMAIN"'"' || true)
       if [ -n "$zone" ]; then say "zone $DOMAIN" "✓ visible to token"; else say "zone $DOMAIN" "✗ not visible — token missing Zone/DNS scope?"; fail=1; fi
     fi
