@@ -153,7 +153,9 @@ def declared_services(stacks: list[str]) -> list[dict]:
         if stack.get("name") in stacks:
             for service in stack.get("services", []):
                 found.append({"name": service.get("name", ""), "kind": service.get("kind", ""),
-                              "backend": stack.get("backend", ""), "job": bool(service.get("job")), "label": (service.get("job") or {}).get("label")})
+                              # The published declaration marks a job by its kind and carries no job object.
+                              "backend": stack.get("backend", ""), "job": service.get("kind") == "job" or bool(service.get("job")),
+                              "label": (service.get("job") or {}).get("label")})
     return found
 
 
