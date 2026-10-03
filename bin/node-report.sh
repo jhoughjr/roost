@@ -399,12 +399,12 @@ esac
 #
 # The reconcile answers for the opi's jobs and it runs on the opi. Nothing runs on a Mac to answer
 # for its jobs, so this report carries them and pulse then holds every host's.
-# The declaration is cached for an hour: it changes when somebody edits a manifest, and this report
-# runs every thirty seconds.
+# The declaration is cached for five minutes: it changes when somebody edits a manifest, and this report
+# runs every thirty seconds. At an hour, a job installed on 2026-10-03 had no state on pulse until its copy aged out.
 JOBS_JSON=""
 if [ "$(uname -s)" = "Darwin" ]; then
   DECLARED_CACHE="$HOME/.roost-node-declared.json"
-  if [ ! -f "$DECLARED_CACHE" ] || [ -n "$(find "$DECLARED_CACHE" -mmin +60 2>/dev/null || true)" ]; then
+  if [ ! -f "$DECLARED_CACHE" ] || [ -n "$(find "$DECLARED_CACHE" -mmin +5 2>/dev/null || true)" ]; then
     # The declaration answers a node key since 2026-09-23.
     if roost_curl_header x-roost-node-key "$KEY" -sf -m 10 "$PULSE/api/declared" -o "$DECLARED_CACHE.new" 2>/dev/null; then
       mv -f "$DECLARED_CACHE.new" "$DECLARED_CACHE"
