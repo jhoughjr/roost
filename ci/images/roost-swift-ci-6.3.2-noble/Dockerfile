@@ -11,6 +11,10 @@
 # Carrying all three removes two `run:` steps that reach an apt mirror on every build, which is the same class of outside dependency the action mirror removes.
 FROM swift:6.3.2-noble
 
+# The weekly prune on the box removes any image no container uses that is a week old, and a job image is in use only while
+# a job runs. On 2026-10-04 it took this image and every job that names it failed at the pull. The prune skips this label.
+LABEL house.job-image="1"
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       nodejs \

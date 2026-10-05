@@ -4,6 +4,10 @@
 # Node is here because a container job runs its JavaScript actions inside the container, and act_runner mounts none of its own.
 FROM swift:6.1-noble
 
+# The weekly prune on the box removes any image no container uses that is a week old, and a job image is in use only while
+# a job runs. On 2026-10-04 it took this image and every job that names it failed at the pull. The prune skips this label.
+LABEL house.job-image="1"
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       nodejs \

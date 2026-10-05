@@ -5,6 +5,10 @@
 # roost/check.yml skips its own shellcheck download when shellcheck is on PATH, so nothing in the workflow changes.
 FROM node:22-bookworm
 
+# The weekly prune on the box removes any image no container uses that is a week old, and a job image is in use only while
+# a job runs. On 2026-10-04 it took this image and every job that names it failed at the pull. The prune skips this label.
+LABEL house.job-image="1"
+
 # The docker client and the Postgres client are here for MWServer's `test` job.
 # That job declares no `container:` of its own, so it lands on whatever `ubuntu-latest` maps to, and it runs its suites inside the Dockerfile's Swift image over the runner's mounted socket.
 # It also installs `postgresql-client` in a `run:` step today, to reach a Postgres service container.
