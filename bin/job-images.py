@@ -3,12 +3,13 @@
 
 A forge job runs in a container, and its image is built on the box and lives in no registry.
 On 2026-10-04 the weekly prune removed roost-ci:arm64 and roost-swift-ci:6.3.2-noble, and the first sign was a failed job a day later.
-This reads the box and builds nothing. A rebuild is a person's step, because a multi-GB write to the NVMe has reset the opi.
+This reads the box and builds nothing. A rebuild or a restore is a person's step, because a multi-GB write to the NVMe has reset the opi.
 
   job-images.py                  one line per job image: state, Swift, created, size, and what wants it
   job-images.py check            one line per wanted image the box does not hold, and exit 1 when there is one
   job-images.py --rows           the same reading as a JSON list, which the reconcile posts to pulse
   job-images.py --forget IMAGE   stop asking for an image this box held once and a person removed on purpose
+  job-images.py --toolchain      one JSON row for a runner that runs its jobs on this host, or nothing when there is none
 
 Four things can want an image, and a row names each one that does:
   - a label of the forge runner on this box, read from the running container's config
@@ -16,16 +17,25 @@ Four things can want an image, and a row names each one that does:
   - a workflow in a checkout on this host, by its `container:` or by a `runs-on` label that maps to the image
   - this box itself, because it held the image on an earlier pass
 
+An image has a package when `job-images-registry.py push` recorded one on this box, or when its declared entry names a `registry`.
+`check` then prints the restore line for it and not the build line, because a pull needs nothing from Docker Hub or an apt mirror.
+
+A runner in host mode has no image. Its jobs build with the toolchain of the host, so `--toolchain` reports that as one row of
+kind `job-toolchain`, and the node report carries the row to pulse beside the host's declared jobs.
+
 Environment: FORGE_RUNNER_CONTAINER (act_runner), FORGE_RUNNER_CONFIG (/data/config.yaml), ROOST_WORKFLOW_ROOTS ($HOME:$HOME/repos),
-ROOST_JOB_IMAGES_SEEN (~/.roost-job-images.seen.json), ROOST_DECLARED_FILE, ROOST_BOX_NAMES.
+ROOST_JOB_IMAGES_SEEN (~/.roost-job-images.seen.json), ROOST_JOB_IMAGES_PUSHED (~/.roost-job-images.pushed.json),
+FORGE_HOST_RUNNER_CONFIG, ROOST_JOB_TOOLCHAIN_CACHE (~/.roost-job-toolchain.json), ROOST_DECLARED_FILE, ROOST_BOX_NAMES.
 """
 import glob
 import json
 import os
+import platform
 import re
 import socket
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RECIPES = os.path.join(os.path.dirname(HERE), "ci", "images")
@@ -33,12 +43,19 @@ HOME = os.path.expanduser("~")
 RUNNER = os.environ.get("FORGE_RUNNER_CONTAINER", "act_runner")
 RUNNER_CONFIG = os.environ.get("FORGE_RUNNER_CONFIG", "/data/config.yaml")
 SEEN_FILE = os.environ.get("ROOST_JOB_IMAGES_SEEN", os.path.join(HOME, ".roost-job-images.seen.json"))
+# What `job-images-registry.py push` wrote for each image it pushed: the package, the day, and the sizes a restore will write.
+PUSHED_FILE = os.environ.get("ROOST_JOB_IMAGES_PUSHED", os.path.join(HOME, ".roost-job-images.pushed.json"))
+TOOLCHAIN_CACHE = os.environ.get("ROOST_JOB_TOOLCHAIN_CACHE", os.path.join(HOME, ".roost-job-toolchain.json"))
+# How long the host's toolchain answer is kept. The node report runs every 30 seconds, and `swift --version` is not free.
+TOOLCHAIN_TTL = 3600
 # The label every recipe under ci/images carries, which is also what the weekly prune keeps.
 KEEP_LABEL = "house.job-image"
 SWIFT_LABEL = "house.swift"
 # No registry serves a name with this prefix, so the box holds it or a job fails at the pull.
 LOCAL_PREFIX = "roost-"
 
+HOST_LABEL_LINE = re.compile(r'^\s*-\s*"?([^":\s]+):host"?\s*$')
+SWIFT_VERSION = re.compile(r"Swift version (\d+(?:\.\d+)+)")
 LABEL_LINE = re.compile(r'^\s*-\s*"?([^":\s]+):docker://([^"\s]+)"?\s*$')
 SIZE = re.compile(r"^([0-9.]+)\s*([kMGT]?B)$")
 SWIFT_TAG = re.compile(r"^(\d+\.\d+(?:\.\d+)?)")
@@ -73,7 +90,7 @@ def box_names():
 
 
 def declared_images():
-    """The images the runner's block declares for this box, as `image -> recipe`.
+    """The images the runner's block declares for this box, as `image -> {recipe, registry}`.
 
     Hatchery publishes the runner's label names today and no image, so this is empty until the block carries `images`.
     """
@@ -95,9 +112,9 @@ def declared_images():
             for service in stack.get("services", []):
                 for entry in (service.get("runner") or {}).get("images") or []:
                     if isinstance(entry, str):
-                        wanted[entry] = None
+                        wanted[entry] = {}
                     elif isinstance(entry, dict) and entry.get("image"):
-                        wanted[entry["image"]] = entry.get("recipe")
+                        wanted[entry["image"]] = {"recipe": entry.get("recipe"), "registry": entry.get("registry")}
         break
     return wanted
 
@@ -187,13 +204,18 @@ def recipe_for(image):
     return None
 
 
-def read_seen():
+def read_json(path):
+    """The object a state file holds, or an empty one when the file is absent or is not JSON."""
     try:
-        with open(SEEN_FILE) as fh:
-            seen = json.load(fh)
-        return seen if isinstance(seen, dict) else {}
+        with open(path) as fh:
+            found = json.load(fh)
+        return found if isinstance(found, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def read_seen():
+    return read_json(SEEN_FILE)
 
 
 def write_seen(seen):
@@ -223,6 +245,7 @@ def reading():
     by_label = dict(labels)
     declared = declared_images()
     seen = read_seen()
+    pushed = read_json(PUSHED_FILE)
     workflows = {}
     for repo, name, job, runs_on, container in workflow_jobs():
         if container:
@@ -282,7 +305,8 @@ def reading():
             "wanted": wanted, "declared": image in declared, "labels": wanted_labels,
             "workflows": workflows.get(image, []), "heldBefore": held_before,
             "lastSeen": seen.get(image) or None if held_before else None,
-            "recipe": declared.get(image) or recipe_for(image),
+            "recipe": (declared.get(image) or {}).get("recipe") or recipe_for(image),
+            "registry": (declared.get(image) or {}).get("registry") or (pushed.get(image) or {}).get("registry"),
             "served": bool(entry), "running": bool(entry), "image": bool(entry),
         })
     write_seen(seen)
@@ -303,8 +327,96 @@ def why(row):
 
 
 def missing_line(row):
-    build = "docker build -t %s ~/roost/%s" % (row["name"], row["recipe"]) if row["recipe"] else "no recipe under ci/images builds it"
-    return "job image %s: the box does not hold it, and %s. A job that lands on it fails at the pull. Build: %s" % (row["name"], why(row), build)
+    """The line `check` prints for a missing image, which ends in the one command that brings it back."""
+    if row["registry"]:
+        remedy = "Restore: ~/roost/bin/job-images-registry.py restore %s" % row["name"]
+    elif row["recipe"]:
+        remedy = "Build: docker build -t %s ~/roost/%s" % (row["name"], row["recipe"])
+    else:
+        remedy = "Build: no recipe under ci/images builds it"
+    return "job image %s: the box does not hold it, and %s. A job that lands on it fails at the pull. %s" % (row["name"], why(row), remedy)
+
+
+def host_runner_config():
+    """The config of a forge runner that runs on this host, or None when the host has none it can read.
+
+    The opi's runner is a container, and its daemon shows in the host's process list with a path inside that container.
+    That path does not open here, so the opi answers None. It must: a row from the opi's node report would replace the
+    reconcile's whole reading on pulse, which keeps one reading per node.
+    """
+    named = os.environ.get("FORGE_HOST_RUNNER_CONFIG")
+    candidates = [named] if named else []
+    if not named:
+        try:
+            listing = subprocess.run(["pgrep", "-fl", "forgejo-runner daemon"], capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            listing = ""
+        for line in listing.splitlines():
+            words = line.split()
+            if "--config" in words[:-1]:
+                candidates.append(words[words.index("--config") + 1])
+        candidates.append(os.path.join(HOME, "forgejo-runner", "config.yaml"))
+    for path in candidates:
+        if path and os.path.isfile(path) and os.access(path, os.R_OK):
+            return path
+    return None
+
+
+def toolchain_row():
+    """One row for the runner that runs jobs on this host: the Swift and the Xcode a job builds with, and the runner's labels.
+
+    The runner's config holds the cache secret and its `.runner` file holds the runner's token, so only a host label line
+    and the registered name leave this function.
+    """
+    config = host_runner_config()
+    if not config:
+        return None
+    try:
+        with open(config) as fh:
+            labels = [match.group(1) for match in map(HOST_LABEL_LINE.match, fh.read().splitlines()) if match]
+    except OSError:
+        return None
+    if not labels:
+        return None
+    registration = read_json(os.path.join(os.path.dirname(config), ".runner")).get("name") or socket.gethostname().split(".")[0]
+
+    facts = read_json(TOOLCHAIN_CACHE)
+    if not facts.get("at") or time.time() - facts["at"] > TOOLCHAIN_TTL:
+        facts = {"at": int(time.time()), "swift": None, "xcode": None, "xcodeBuild": None}
+        match = SWIFT_VERSION.search(run_tool("swift", "--version"))
+        if match:
+            facts["swift"] = match.group(1)
+        for line in run_tool("xcodebuild", "-version").splitlines():
+            if line.startswith("Xcode "):
+                facts["xcode"] = line.split(" ", 1)[1].strip()
+            elif line.startswith("Build version "):
+                facts["xcodeBuild"] = line.split()[-1]
+        try:
+            with open(TOOLCHAIN_CACHE + ".new", "w") as fh:
+                json.dump(facts, fh)
+            os.replace(TOOLCHAIN_CACHE + ".new", TOOLCHAIN_CACHE)
+        except OSError:
+            pass
+    mac = platform.mac_ver()[0]
+    return {
+        "name": registration + " toolchain", "names": [], "kind": "job-toolchain",
+        # A host with a runner and no Swift on its PATH is a build box that cannot build, which is the missing case here.
+        "state": "held" if facts.get("swift") else "missing",
+        "runner": registration, "swift": facts.get("swift"), "swiftSource": "host" if facts.get("swift") else None,
+        "xcode": facts.get("xcode"), "xcodeBuild": facts.get("xcodeBuild"),
+        "os": ("macOS " + mac) if mac else platform.system(),
+        "labels": labels,
+        "served": bool(facts.get("swift")), "running": bool(facts.get("swift")), "image": True,
+    }
+
+
+def run_tool(*command):
+    """What a toolchain command prints on either stream, or an empty string when the host has no such tool."""
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return done.stdout + done.stderr
 
 
 def main(argv):
@@ -315,6 +427,11 @@ def main(argv):
             return 1
         write_seen(seen)
         print("job-images: %s is forgotten, and a pass that finds it gone says nothing" % argv[1])
+        return 0
+    if argv[:1] == ["--toolchain"]:
+        row = toolchain_row()
+        if row:
+            print(json.dumps(row, separators=(",", ":")))
         return 0
     rows = reading()
     if argv[:1] == ["--rows"]:

@@ -64,11 +64,43 @@ class JobImagesTest(unittest.TestCase):
         with open(os.path.join(where, "ci.yml"), "w") as fh:
             fh.write(text)
 
+    def host_runner(self, swift=True):
+        """A runner in host mode as the mini holds one: a config with host labels and the cache secret, a `.runner` file with its
+        name and its token, and a Swift and an Xcode on the PATH."""
+        where = os.path.join(self.home, "forgejo-runner")
+        os.makedirs(where)
+        with open(os.path.join(where, "config.yaml"), "w") as fh:
+            fh.write('runner:\n  labels:\n    - "self-hosted:host"\n    - "macos:host"\n    - "mini:host"\ncache:\n  secret: "made-up-cache-secret"\n')
+        with open(os.path.join(where, ".runner"), "w") as fh:
+            json.dump({"name": "mini-forge", "token": "made-up-runner-token", "labels": ["self-hosted:host"]}, fh)
+        tools = {"xcodebuild": "printf 'Xcode 27.0\\nBuild version 27A266a\\n'\n"}
+        if swift:
+            tools["swift"] = ("printf 'swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\\n"
+                              "Target: arm64-apple-macosx26.0\\n'\n")
+        else:
+            tools["swift"] = "exit 127\n"
+        for name, body in tools.items():
+            path = os.path.join(self.stub, name)
+            with open(path, "w") as fh:
+                fh.write("#!/usr/bin/env bash\necho run >> %s\n%s" % (os.path.join(self.tmp, name + ".calls"), body))
+            os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        # pgrep finds no daemon in a test, so the config is found at its usual path under HOME.
+        path = os.path.join(self.stub, "pgrep")
+        with open(path, "w") as fh:
+            fh.write("#!/usr/bin/env bash\nexit 1\n")
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+
+    def toolchain(self):
+        result = self.run_script("--toolchain")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
     def run_script(self, *args):
         env = dict(os.environ)
         env.update({"HOME": self.home, "PATH": self.stub + os.pathsep + env["PATH"],
                     "FAKE_DOCKER_IMAGES": os.path.join(self.tmp, "box.json"), "ROOST_WORKFLOW_ROOTS": self.home})
-        for name in ("ROOST_DECLARED_FILE", "ROOST_JOB_IMAGES_SEEN", "ROOST_BOX_NAMES"):
+        for name in ("ROOST_DECLARED_FILE", "ROOST_JOB_IMAGES_SEEN", "ROOST_BOX_NAMES", "ROOST_JOB_IMAGES_PUSHED",
+                     "FORGE_HOST_RUNNER_CONFIG", "ROOST_JOB_TOOLCHAIN_CACHE"):
             env.pop(name, None)
         return subprocess.run([sys.executable, SCRIPT, *args], env=env, capture_output=True, text=True, timeout=60)
 
@@ -191,6 +223,80 @@ class JobImagesTest(unittest.TestCase):
 
         self.assertEqual(row["state"], "missing")
         self.assertTrue(row["declared"])
+
+    def test_a_declared_image_with_a_registry_restores_and_does_not_build(self):
+        # jimmy/hatchery#4 gives the runner's block the field. Until it does, the push's own record names the package.
+        declared = {"stacks": [{"name": "box", "backend": "host", "host": "jimmy@opi.jimmyhoughjr.net", "services": [
+            {"name": "act_runner", "kind": "act-runner", "runner": {"registration": "opi-forge", "images": [
+                {"image": "roost-swift-ci:6.3.2-noble", "recipe": "ci/images/roost-swift-ci-6.3.2-noble",
+                 "registry": "forgejo.jimmyhoughjr.net/jimmy/roost-swift-ci:6.3.2-noble"}]}}]}]}
+        with open(os.path.join(self.home, ".roost-reconcile-declared.json"), "w") as fh:
+            json.dump(declared, fh)
+
+        self.assertEqual(self.rows()["roost-swift-ci:6.3.2-noble"]["registry"], "forgejo.jimmyhoughjr.net/jimmy/roost-swift-ci:6.3.2-noble")
+        result = self.run_script("check")
+
+        self.assertIn("Restore: ~/roost/bin/job-images-registry.py restore roost-swift-ci:6.3.2-noble", result.stdout)
+        self.assertNotIn("docker build -t roost-swift-ci:6.3.2-noble", result.stdout)
+
+    def test_an_image_with_no_package_has_no_registry_and_builds(self):
+        self.assertIsNone(self.rows()["roost-ci:arm64"]["registry"])
+
+    # ── a runner that runs its jobs on the host ──────────────────────────
+
+    def test_a_host_runner_is_one_row_with_the_swift_and_the_xcode_of_the_host(self):
+        # The mini on 2026-10-05: its runner has no image, so the toolchain a job tests is the host's.
+        self.host_runner()
+
+        row = self.toolchain()
+
+        self.assertEqual((row["name"], row["kind"], row["state"]), ("mini-forge toolchain", "job-toolchain", "held"))
+        self.assertEqual((row["swift"], row["swiftSource"]), ("6.4", "host"))
+        self.assertEqual((row["xcode"], row["xcodeBuild"]), ("27.0", "27A266a"))
+        self.assertEqual(row["runner"], "mini-forge")
+        self.assertEqual(row["labels"], ["self-hosted", "macos", "mini"])
+        self.assertEqual(row["names"], [])
+
+    def test_a_host_with_no_runner_answers_nothing(self):
+        # The air has no forge runner, and the opi's runs in a container whose config does not open on the host.
+        result = self.run_script("--toolchain")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_host_runner_with_no_swift_is_a_missing_row(self):
+        self.host_runner(swift=False)
+
+        row = self.toolchain()
+
+        self.assertEqual(row["state"], "missing")
+        self.assertIsNone(row["swift"])
+        self.assertFalse(row["served"])
+
+    def test_the_toolchain_is_asked_once_an_hour_and_not_once_a_report(self):
+        # The node report runs every 30 seconds.
+        self.host_runner()
+        self.toolchain()
+
+        row = self.toolchain()
+
+        self.assertEqual(row["swift"], "6.4")
+        with open(os.path.join(self.tmp, "swift.calls")) as fh:
+            self.assertEqual(len(fh.read().splitlines()), 1)
+
+    def test_the_toolchain_row_holds_no_secret_of_the_runner(self):
+        self.host_runner()
+
+        result = self.run_script("--toolchain")
+
+        self.assertNotIn("made-up-cache-secret", result.stdout + result.stderr)
+        self.assertNotIn("made-up-runner-token", result.stdout + result.stderr)
+
+    def test_the_toolchain_row_fits_the_node_report(self):
+        # pulse refuses a node report over 4096 bytes, and the mini's carries about 1.7 KB before this row.
+        self.host_runner()
+
+        self.assertLess(len(self.run_script("--toolchain").stdout), 400)
 
     # ── the check a person or a timer runs ───────────────────────────────
 

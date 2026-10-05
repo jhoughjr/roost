@@ -58,7 +58,7 @@ Each recipe now carries two labels. `house.job-image` is the one `bin/docker-pru
 
 ```sh
 ~/roost/bin/job-images.py          # every job image: state, Swift, created, size, kept by the prune or not, and what wants it
-~/roost/bin/job-images.py check    # one line per wanted image the box does not hold, with its build line, and exit 1
+~/roost/bin/job-images.py check    # one line per wanted image the box does not hold, with its restore or build line, and exit 1
 ```
 
 The reconcile runs the same reader every ten minutes. It writes one journal line per missing image, posts every row to pulse `/api/answers` as a row of kind `job-image`, and posts one event when an image goes and one when it returns.
@@ -67,7 +67,40 @@ Four things can want an image, and a row names each: a label of the runner on th
 The last one is what notices a loss on the opi today. The opi holds no checkout of hatchery's or vault's workflows, and the declaration pulse publishes carries the runner's label names and no image.
 `job-images.py --forget <image>` stops the question for an image a person removed on purpose.
 
+A runner in host mode has no image, so its row is the host's toolchain. The mini's node report carries one row of kind `job-toolchain` with the Swift and the Xcode on the host and the runner's labels, read by `job-images.py --toolchain` and cached for an hour.
+Any Mac whose node report finds a `forgejo-runner daemon` with host labels sends the same row with no further work.
+
+### The forge's registry holds a copy
+
+A job image can go to the forge's own registry, so a lost image is a pull from the same box and not a build from Docker Hub and the apt mirrors (jimmy/house#101).
+The local name stays: `roost-ci:arm64` is pushed as `forgejo.jimmyhoughjr.net/jimmy/roost-ci:arm64`, and a restore tags it back, so no workflow and no runner label changes.
+
+```sh
+~/roost/bin/job-images-registry.py push roost-swift-ci:6.3.2-noble       # after a build, once per image
+~/roost/bin/job-images-registry.py restore roost-swift-ci:6.3.2-noble    # when job-images.py check names it
+```
+
+Both are a person's step and no timer runs either. Add `--dry-run` to see each docker command and the bytes it writes, with nothing run.
+
+| Image | A push writes, to the root disk | A restore writes, to the NVMe |
+|---|---|---|
+| `roost-ci:arm64` | up to 0.49 GB | about 1.98 GB |
+| `roost-swift-ci:6.1-noble` | up to 1.07 GB | about 4.53 GB |
+| `roost-swift-ci:6.3.2-noble` | up to 1.38 GB | about 5.8 GB |
+
+A push sends the compressed layers to the forge's package store, which is vault's S3 under `/var/lib/dokku` on the root disk. A restore writes the layers and their unpacked copy to docker's store on the NVMe.
+**A sustained write to the NVMe has reset the opi.** Run one image at a time, at a time when a reset costs little, with `box-watch` beside it.
+
+The push signs in with a token of its own, with `write:package`, from `~/.forge_job_image_token` at mode 600 or from the host's vault document under `FORGE_JOB_IMAGE_TOKEN`. It signs in to a throwaway docker config directory, so the box's own read-only login is left alone. The restore uses that read-only login.
+A push records the package and its sizes in `~/.roost-job-images.pushed.json`. From then on `job-images.py check` prints the restore line for that image and not the build line.
+
+The nightly backup leaves `forgejo/packages` out, so the copy in the registry does not survive the loss of the box. It covers a lost image store and a prune, and the recipes here cover the rest.
+`hatchery forge prune` deletes only the packages it is given by name, so it does not touch these while nobody names them. Never add one to its list without `--protect` for the tag.
+
 ### Build one again
+
+This is the path for an image with no package, and for a new recipe.
+
 
 A build is a person's step and nothing runs it on a timer, because a sustained write to the NVMe has reset the opi. Run one image at a time, at a time when a reset costs little, with `box-watch` beside it.
 
@@ -77,7 +110,7 @@ A build is a person's step and nothing runs it on a timer, because a sustained w
 | `roost-swift-ci:6.1-noble` | `docker build -t roost-swift-ci:6.1-noble ~/roost/ci/images/roost-swift-ci-6.1-noble` | about 4.5 GB, or about 0.1 GB while the box still holds `swift:6.1-noble` |
 | `roost-swift-ci:6.3.2-noble` | `docker build -t roost-swift-ci:6.3.2-noble ~/roost/ci/images/roost-swift-ci-6.3.2-noble` | about 6 GB |
 
-`job-images.py check` prints the line for each image that is missing. A recipe with no `COPY` also builds from a terminal on any host: `ssh jimmy@192.168.0.103 'docker build -t <tag> -' < ci/images/<dir>/Dockerfile`.
+`job-images.py check` prints the restore line or the build line for each image that is missing. A recipe with no `COPY` also builds from a terminal on any host: `ssh jimmy@192.168.0.103 'docker build -t <tag> -' < ci/images/<dir>/Dockerfile`.
 
 ## The runner
 

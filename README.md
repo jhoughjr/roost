@@ -116,7 +116,7 @@ host once both lines say `vault`.
 | [bin/publish-route.sh](bin/publish-route.sh) | Publish a subdomain through the Cloudflare tunnel via API — no dashboard |
 | [bin/status.sh](bin/status.sh) | The `roost status` orchestrator: self-update, collect, validate, deploy |
 | [bin/fleet-board.py](bin/fleet-board.py) | Fleet snapshot board. Alerting is pulse's, from the readings roost posts it |
-| [bin/node-report.sh](bin/node-report.sh) | Per-node telemetry (load/mem/disk/watts/battery/runner/temps) → pulse `/api/nodes`, macOS + Linux; launchd/systemd installer alongside |
+| [bin/node-report.sh](bin/node-report.sh) | Per-node telemetry (load/mem/disk/watts/battery/runner/temps, and the Swift and Xcode of a host that runs a forge runner) → pulse `/api/nodes`, macOS + Linux; launchd/systemd installer alongside |
 | [bin/ci-live-report.sh](bin/ci-live-report.sh) | Live CI-run poller (runs on the CI Mac) → the ci-live app; launchd installer alongside |
 | [bin/gen-narrative.py](bin/gen-narrative.py) | Composes the board narrative from merged PRs when `roost status` gets no message |
 | [bin/roost-prune.py](bin/roost-prune.py) | Disk reclaim (dry-run default) |
@@ -131,6 +131,7 @@ host once both lines say `vault`.
 | [bin/volts.py](bin/volts.py) | Prints mains voltage and load from pulse `/api/history` as terminal sparklines, to match a voltage dip to its cause. Runs on any machine that reaches pulse |
 | [bin/dokku-reconcile.sh](bin/dokku-reconcile.sh) | Runs on the opi every 10 minutes (`install-dokku-reconcile.sh`, systemd user timer). Starts deployed apps that are down, names apps with no image, rebuilds the vhosts, asks each declared app its health path, names a forge job image the box lost, and posts its readings to pulse `/api/answers` and its events to pulse `/api/events` |
 | [bin/job-images.py](bin/job-images.py) | The forge job images a build box holds: state, the Swift in each, created, size, and what wants it. `check` names each wanted image the box does not hold and exits 1. It reads only, and the reconcile posts its rows to pulse |
+| [bin/job-images-registry.py](bin/job-images-registry.py) | `push <image>` sends a forge job image to the forge's registry, and `restore <image>` pulls a lost one back under its local name. A person's step, never a timer. `--dry-run` prints each docker command and the bytes it writes |
 | [bin/mesh-alert.sh](bin/mesh-alert.sh) | Sends one line over LoRa through Meshtastic to `MESH_DEST`, when the network cannot carry an alert. It runs on the opi, and the reconcile alert calls it. [docs/mesh-alert-setup.md](docs/mesh-alert-setup.md) has the setup |
 | [bin/backup-watch.sh](bin/backup-watch.sh) | Runs on the opi at 08:00 (`install-backup-watch.sh`, systemd user timer). Sends an ntfy alert when the nightly backup did not write its finish stamp |
 | [bin/runner-watchdog.sh](bin/runner-watchdog.sh) | Runs on the opi every 15 minutes (`install-runner-watchdog.sh`, systemd user timer). Watches the self-hosted GitHub runners through the GitHub API, and sends an ntfy alert for a runner offline too long or a run queued too long |

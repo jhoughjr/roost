@@ -636,7 +636,7 @@ if [ "$jobs_ok" -gt 0 ] || [ -n "$jobs_bad" ]; then
 fi
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
 [ -z "$unhealthy_names" ] || say "  not healthy:$unhealthy_names"
-[ -z "$job_images_missing" ] || say "  job images missing: $job_images_missing - job-images.py check prints the build line for each"
+[ -z "$job_images_missing" ] || say "  job images missing: $job_images_missing - job-images.py check prints the restore or the build line for each"
 
 # Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
 # Non-fatal by contract: no key means no report, and a failed post changes nothing about the exit below.
