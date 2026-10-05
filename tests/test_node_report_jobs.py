@@ -263,6 +263,39 @@ esac
         # The roms-catalog job has no declared label, so it should use the built one.
         self.assertEqual(jobs["roms-catalog"]["state"], "ok")
 
+    # ── the toolchain of a runner on this host ───────────────────────────
+
+    def host_runner(self):
+        where = os.path.join(self.home, "forgejo-runner")
+        os.makedirs(where)
+        with open(os.path.join(where, "config.yaml"), "w") as fh:
+            fh.write('runner:\n  labels:\n    - "self-hosted:host"\n    - "macos:host"\n')
+        with open(os.path.join(where, ".runner"), "w") as fh:
+            json.dump({"name": "mini-forge"}, fh)
+        write_stub(self.stub, "swift", "printf 'Apple Swift version 6.4 (swiftlang-6.4.0.34.1)\\n'\n")
+        write_stub(self.stub, "xcodebuild", "printf 'Xcode 27.0\\nBuild version 27A266a\\n'\n")
+        write_stub(self.stub, "pgrep", "exit 1\n")
+
+    def test_a_host_runner_adds_its_toolchain_row_beside_the_jobs(self):
+        self.host_runner()
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        row = self.jobs()["mini-forge toolchain"]
+        self.assertEqual((row["kind"], row["state"], row["swift"], row["xcode"]), ("job-toolchain", "held", "6.4", "27.0"))
+        # The declared jobs are still there, and the body is still under pulse's limit for a node report.
+        self.assertEqual(self.jobs()["roost-node-report"]["state"], "ok")
+        with open(self.posted) as fh:
+            self.assertLess(len(fh.read()), 4096)
+
+    def test_a_host_with_no_runner_reports_its_jobs_and_no_toolchain(self):
+        write_stub(self.stub, "pgrep", "exit 1\n")
+
+        self.run_script()
+
+        self.assertEqual([row for row in self.reading().get("jobs", []) if row["kind"] == "job-toolchain"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

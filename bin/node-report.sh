@@ -494,6 +494,20 @@ if [ "${RUNNERS:-0}" -gt 0 ] || [ "$RUNNER_INSTALLED" = 1 ]; then
   RUNNER_JSON=",\"runners\":$RUNNERS,\"runnersBusy\":${BUSY:-0}"
 fi
 
+# The toolchain a forge runner on this host builds with, as one more row beside the declared jobs.
+#
+# A runner in host mode has no job image, so the Swift and the Xcode of the host are what its jobs test. Pulse keeps the rows of
+# this report as the node's answers, and the coop draws this one in its Job images table. `job-images.py` answers nothing on a host
+# with no such runner, so the body is unchanged there. It caches the versions for an hour, because this report runs every 30 seconds.
+TOOLCHAIN_ROW=$(python3 "$(dirname "${BASH_SOURCE[0]}")/job-images.py" --toolchain 2>/dev/null || true)
+if [ -n "$TOOLCHAIN_ROW" ]; then
+  if [ -n "$JOBS_JSON" ]; then
+    JOBS_JSON="${JOBS_JSON%]},$TOOLCHAIN_ROW]"
+  else
+    JOBS_JSON=",\"jobs\":[$TOOLCHAIN_ROW]"
+  fi
+fi
+
 roost_curl_header x-roost-node-key "$KEY" -sf -m 10 -X POST "$PULSE/api/nodes" \
   -H "content-type: application/json" \
   -d "{\"name\":\"$NAME\",\"load1\":$LOAD1,\"cores\":$CORES,\"memTotalMb\":$MEM_TOTAL_MB,\"memUsedMb\":$MEM_USED_MB,\"diskTotalMb\":$DISK_TOTAL_MB,\"diskUsedMb\":$DISK_USED_MB,\"idleW\":$IDLE_W,\"maxW\":$MAX_W,\"model\":\"$MODEL\"$WATTS_JSON$NET_JSON$POWER_JSON$RUNNER_JSON$TEMP_JSON$JOBS_JSON}" \
