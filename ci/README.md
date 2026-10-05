@@ -35,22 +35,49 @@ A `container:` job runs its JavaScript actions inside that container, and `actio
 
 A `run:` step reaches wherever it likes, and no forge setting governs that. A step that downloads a tool from a GitHub release is a GitHub dependency that survives every mirror. An image that already carries the tool removes it, and the workflow needs no edit when the step already checks whether the tool is present.
 
-| Image | Base | Carries | For |
-|---|---|---|---|
-| `roost-ci:arm64` | `node:22-bookworm` | shellcheck, git, curl, python3 | shell and script workflows |
-| `roost-swift-ci:6.1-noble` | `swift:6.1-noble` | node, git, curl | vault |
-| `roost-swift-ci:6.3.2-noble` | `swift:6.3.2-noble` | node, git, curl, python3, jemalloc, the docker client | hatchery, swift-pdf-builder |
-| `roost-swift-ci:6.3` | `swift:6.3` | node, git, curl | none now, and the box does not hold it |
+| Image | Base | Carries | For | Size on the box |
+|---|---|---|---|---|
+| `roost-ci:arm64` | `node:22-bookworm` | shellcheck, git, curl, python3, the docker client, psql | a job that names no container: every label of the runner maps to it | 1.98 GB |
+| `roost-swift-ci:6.1-noble` | `swift:6.1-noble` | node, git, curl | vault, rookery, atlas | 4.53 GB |
+| `roost-swift-ci:6.3.2-noble` | `swift:6.3.2-noble` | node, git, curl, python3, jemalloc, the docker client | hatchery, swift-pdf-builder | 5.8 GB |
+| `roost-swift-ci:6.3` | `swift:6.3` | node, git, curl | none now, and the box does not hold it | not built |
 
-Build one with:
-
-```sh
-docker build -t roost-ci:arm64 ci/images/roost-ci
-```
+The sizes are what `docker images` printed on the opi on 2026-10-05, after all three were built again.
 
 A Swift image tag matches the tag the project's own Dockerfile builds with, so a gate tests the toolchain that deploys.
 
-These images are built on the box and live nowhere else, so a move or a loss of the image store takes them with it. On 2026-09-21 the move of containerd's store to the NVMe did, and every job failed at the pull with `pull access denied`. Build each one again from its recipe here. A recipe with no `COPY` builds from a terminal on any host: `ssh jimmy@192.168.0.103 'docker build -t <tag> -' < ci/images/<dir>/Dockerfile`.
+### They live on the box and nowhere else
+
+These images are built on the box and are in no registry, so a lost one is a build and never a pull. Two things have taken them.
+On 2026-09-21 the move of containerd's store to the NVMe did, and every job failed at the pull with `pull access denied`.
+On 2026-10-04 the weekly prune did: it removes an image no container uses once the image is a week old, and a job image is in use only while a job runs. It took `roost-ci:arm64` and `roost-swift-ci:6.3.2-noble`, and the first sign was a failed job a day later (jimmy/house#98).
+
+Each recipe now carries two labels. `house.job-image` is the one `bin/docker-prune.sh` skips. `house.swift` is the Swift the image carries, which the report below reads without starting a container.
+
+### See what a box holds
+
+```sh
+~/roost/bin/job-images.py          # every job image: state, Swift, created, size, kept by the prune or not, and what wants it
+~/roost/bin/job-images.py check    # one line per wanted image the box does not hold, with its build line, and exit 1
+```
+
+The reconcile runs the same reader every ten minutes. It writes one journal line per missing image, posts every row to pulse `/api/answers` as a row of kind `job-image`, and posts one event when an image goes and one when it returns.
+
+Four things can want an image, and a row names each: a label of the runner on the box, the `images` list of the runner's block in hatchery's declaration, a workflow in a checkout on that host, and the box itself when it held the image on an earlier pass.
+The last one is what notices a loss on the opi today. The opi holds no checkout of hatchery's or vault's workflows, and the declaration pulse publishes carries the runner's label names and no image.
+`job-images.py --forget <image>` stops the question for an image a person removed on purpose.
+
+### Build one again
+
+A build is a person's step and nothing runs it on a timer, because a sustained write to the NVMe has reset the opi. Run one image at a time, at a time when a reset costs little, with `box-watch` beside it.
+
+| Image | The command, on the opi | Writes to the NVMe |
+|---|---|---|
+| `roost-ci:arm64` | `docker build -t roost-ci:arm64 ~/roost/ci/images/roost-ci` | about 2 GB |
+| `roost-swift-ci:6.1-noble` | `docker build -t roost-swift-ci:6.1-noble ~/roost/ci/images/roost-swift-ci-6.1-noble` | about 4.5 GB, or about 0.1 GB while the box still holds `swift:6.1-noble` |
+| `roost-swift-ci:6.3.2-noble` | `docker build -t roost-swift-ci:6.3.2-noble ~/roost/ci/images/roost-swift-ci-6.3.2-noble` | about 6 GB |
+
+`job-images.py check` prints the line for each image that is missing. A recipe with no `COPY` also builds from a terminal on any host: `ssh jimmy@192.168.0.103 'docker build -t <tag> -' < ci/images/<dir>/Dockerfile`.
 
 ## The runner
 
