@@ -466,7 +466,7 @@ It posts the whole set to pulse `/api/tapo`, and `install-tapo-poll.sh` runs it 
 
 **Watchdogs on the opi.** Each one is a systemd user timer, so linger must be on.
 
-- `dokku-reconcile.sh`, every 10 minutes: starts deployed apps that are down, names apps with no image, rebuilds the vhosts, and asks each declared app its health path. It posts to pulse `/api/answers` and `/api/events`. When it finds a thing it cannot fix, `dokku-reconcile-alert.service` sends the line through `mesh-alert.sh` over LoRa. [mesh-alert-setup.md](mesh-alert-setup.md) has the radio setup.
+- `dokku-reconcile.sh`, every 10 minutes: starts deployed apps that are down, names apps with no image, rebuilds the vhosts, asks each declared app its health path, and reports the forge job images the box holds through `job-images.py`. It posts to pulse `/api/answers` and `/api/events`. When it finds a thing it cannot fix, `dokku-reconcile-alert.service` sends the line through `mesh-alert.sh` over LoRa. [mesh-alert-setup.md](mesh-alert-setup.md) has the radio setup.
 - `backup-watch.sh`, at 08:00: sends an ntfy alert when the nightly backup wrote no finish stamp.
 - `runner-watchdog.sh`, every 15 minutes: watches the self-hosted GitHub runners through the GitHub API, and sends an ntfy alert for a runner offline too long or a run queued too long.
 

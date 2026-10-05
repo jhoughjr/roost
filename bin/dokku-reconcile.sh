@@ -34,6 +34,11 @@
 # and nothing more, because a container dokku did not make is not dokku's to
 # start and starting one blind would be inventing intent.
 #
+# It names a forge job image the box does not hold, and reports every one it does hold with the Swift in it.
+# Those images are built on this box and live in no registry, so a missing one fails every job that lands on it at the pull.
+# On 2026-10-04 the weekly prune removed roost-ci:arm64, and a failed job in a new repository was the first sign, a day later.
+# `job-images.py` in the roost clone is the reader. This pass never builds an image: a person decides when the box takes that write.
+#
 # It answers for the declared jobs on this box the same way. A job runs under systemd rather than
 # under docker, so systemd is asked instead: whether the last run exited zero, what it exited, and
 # when. This pass never starts one either.
@@ -567,6 +572,49 @@ for stack in declared.get("stacks", []):
   "$BOX_NAMES" \
   "$(docker ps -a --format '{{.Names}} {{.State}}' || true)")
 
+# The forge job images this box holds and the ones a job wants that are gone, as the rows `job-images.py` writes.
+#
+# The reader lives in the roost clone on this box and not beside this installed copy, because it reads the recipes under ci/images there.
+# A box with no clone asks about nothing. The reader builds nothing, and neither does this pass.
+JOB_IMAGES_TOOL="${ROOST_JOB_IMAGES_TOOL:-$HOME/roost/bin/job-images.py}"
+job_image_rows="[]"
+if [ -f "$JOB_IMAGES_TOOL" ]; then
+  job_image_rows=$(ROOST_BOX_NAMES="$BOX_NAMES" ROOST_DECLARED_FILE="$declared_file" python3 "$JOB_IMAGES_TOOL" --rows 2>/dev/null || true)
+  [ -n "$job_image_rows" ] || job_image_rows="[]"
+fi
+# One line per missing image as `image|why`, in the reader's own words.
+job_images_gone=$(printf '%s' "$job_image_rows" | python3 -c '
+import json, sys
+try:
+    rows = json.load(sys.stdin)
+except ValueError:
+    rows = []
+for row in rows:
+    if row.get("state") != "missing":
+        continue
+    wants = []
+    if row.get("labels"):
+        wants.append("the runner labels " + " ".join(row["labels"]) + " map to it")
+    if row.get("declared"):
+        wants.append("the declaration names it")
+    if row.get("workflows"):
+        wants.append(", ".join(row["workflows"]) + " name it")
+    if row.get("heldBefore"):
+        wants.append("this box held it before")
+    print("%s|%s" % (row["name"], "; ".join(wants)))
+' 2>/dev/null || true)
+job_images_missing=""
+while IFS='|' read -r image wants; do
+  [ -n "${image:-}" ] || continue
+  job_images_missing="$job_images_missing $image"
+  say "  job image $image: the box does not hold it, and $wants - a job that lands on it fails at the pull"
+done <<< "$job_images_gone"
+job_images_missing="${job_images_missing# }"
+# What the last pass found missing, so the events below say a change once and not the same fact every ten minutes.
+# Named in full, because `state` is a loop variable by this point and no longer the path it was above.
+job_images_file="${XDG_STATE_HOME:-$HOME/.local/state}/dokku-reconcile.job-images"
+job_images_were=$(cat "$job_images_file" 2>/dev/null || true)
+
 say "dokku-reconcile: $checked apps, $started started, $imageless with no image, $unserved not served"
 if [ "$declared_up" -gt 0 ] || [ -n "$declared_down" ]; then
   say "  declared containers: $declared_up running${declared_down:+, not running:$declared_down}"
@@ -588,6 +636,7 @@ if [ "$jobs_ok" -gt 0 ] || [ -n "$jobs_bad" ]; then
 fi
 [ "$imageless" -eq 0 ] || say "  redeploy needed:$imageless_names"
 [ -z "$unhealthy_names" ] || say "  not healthy:$unhealthy_names"
+[ -z "$job_images_missing" ] || say "  job images missing: $job_images_missing - job-images.py check prints the build line for each"
 
 # Report what answers into pulse, so a page off this box can draw it beside what hatchery declares.
 # Non-fatal by contract: no key means no report, and a failed post changes nothing about the exit below.
@@ -746,6 +795,17 @@ for line in sys.argv[9].splitlines():
                  "exit": int(code) if code and code.lstrip("-").isdigit() else None, "at": when,
                  "served": state == "ok", "running": state == "running", "image": True})
 
+# The forge job images, as the reader wrote them. A row says what the box holds, the Swift in it and what wants it.
+# It carries no names, so no reader draws it as an app.
+try:
+    job_images = json.loads(sys.argv[16] or "[]")
+except ValueError:
+    job_images = []
+for row in job_images:
+    if isinstance(row, dict) and row.get("name") and row["name"] not in seen:
+        seen.add(row["name"])
+        apps.append(row)
+
 # The mesh alert receiver, when the radio could be read. Its row says whether the one channel that survives the
 # network can still reach a person. It carries no names, so no reader draws it as an app.
 mesh = sys.argv[15].split("|")
@@ -756,7 +816,7 @@ if len(mesh) == 3 and mesh[0]:
                  "served": state == "heard", "running": state == "heard", "image": True})
 
 print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps": apps, "started": int(sys.argv[4]), "rebuilt": sys.argv[5] == "1"}))
-' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names" "$container_mem" "$container_age" "$app_codes" "$mesh_line")
+' "$still" "$imageless_names" "$running" "$started" "$rebuilt" "$(uptime -s 2>/dev/null || true)" "$declared_states" "$database_states" "$declared_job_states" "$asked_names" "$unhealthy_names" "$container_mem" "$container_age" "$app_codes" "$mesh_line" "$job_image_rows")
   HDR=$(mktemp)
   chmod 600 "$HDR"
   printf 'x-roost-node-key: %s\n' "$NODE_KEY" > "$HDR"
@@ -773,7 +833,7 @@ print(json.dumps({"node": "opi", "host": "opi", "bootedAt": sys.argv[6], "apps":
   last_boot="$(cat "$BOOT_FILE" 2>/dev/null || true)"
   events=$(python3 -c '
 import json, sys, time
-booted, last_boot, started, imageless_names, unserved_names, still, rebuilt, restored_apps, newly_quarantined, unhealthy_names = sys.argv[1:11]
+booted, last_boot, started, imageless_names, unserved_names, still, rebuilt, restored_apps, newly_quarantined, unhealthy_names, job_images_missing, job_images_were = sys.argv[1:13]
 events = []
 def add(kind, tone, message, subject="opi", at=None, detail=None):
     e = {"kind": kind, "source": "roost", "subject": subject, "tone": tone, "message": message}
@@ -804,8 +864,14 @@ elif rebuilt == "1":
     add("reconcile", "warn", "rebuilt every vhost")
 if unhealthy_names.split():
     add("unhealthy", "err", "answering, and failing its own health path: " + " ".join(unhealthy_names.split()), detail={"apps": unhealthy_names.split()})
+# An image stays gone until a person builds it, so the change is the event, and the reading carries the standing fact.
+if job_images_missing.split() and job_images_missing != job_images_were:
+    add("job-image", "bad", "the box holds no image for: " + " ".join(job_images_missing.split()) + ", and a forge job that lands on one fails at the pull",
+        detail={"images": job_images_missing.split()})
+elif job_images_were.split() and not job_images_missing.split():
+    add("job-image", "go", "every forge job image is on the box again", detail={"images": job_images_were.split()})
 print(json.dumps({"events": events}) if events else "")
-' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt" "$restored_apps" "$newly_quarantined" "$unhealthy_names")
+' "$booted" "$last_boot" "$started" "$imageless_names" "$unserved_names" "$still" "$rebuilt" "$restored_apps" "$newly_quarantined" "$unhealthy_names" "$job_images_missing" "$job_images_were")
   if [ -n "$events" ]; then
     if curl -sf -m 20 -X POST "$PULSE/api/events" -H "content-type: application/json" -H "@$HDR" --data-binary "$events" > /dev/null; then
       say "  report: the events are on pulse"
@@ -814,6 +880,7 @@ print(json.dumps({"events": events}) if events else "")
     fi
   fi
   [ -n "$booted" ] && printf '%s\n' "$booted" > "$BOOT_FILE"
+  printf '%s\n' "$job_images_missing" > "$job_images_file" 2>/dev/null || true
   rm -f "$HDR"
 fi
 

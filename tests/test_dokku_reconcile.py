@@ -30,6 +30,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "bin", "dokku-reconcile.sh")
+JOB_IMAGES = os.path.join(ROOT, "bin", "job-images.py")
+FAKE_IMAGES = os.path.join(ROOT, "tests", "fake_docker_images.py")
 
 # The declaration as hatchery publishes it: one dokku stack and one host stack,
 # and a second box whose containers are not this box's to answer for.
@@ -84,6 +86,17 @@ DECLARED = {
         },
     ],
 }
+
+# The runner's config as the container holds it, with the cache secret beside the labels.
+RUNNER_CONFIG = """runner:
+  labels:
+    - "self-hosted:docker://roost-ci:arm64"
+    - "linux:docker://roost-ci:arm64"
+cache:
+  secret: "made-up-cache-secret"
+"""
+SWIFT_61 = {"created": "2026-08-26T23:03:00-05:00", "size": "4.53GB"}
+ROOST_CI = {"created": "2026-10-05T10:30:00-05:00", "size": "1.4GB", "labels": {"house.job-image": "1"}}
 
 # `docker ps -a` as the box answers it: one dokku container, one container
 # running, one stopped, and no row at all for mwserver-temporal.
@@ -149,6 +162,8 @@ class DokkuReconcileTest(unittest.TestCase):
 
         self.stub = os.path.join(self.tmp, "bin")
         os.makedirs(self.stub)
+        # None is a box with no roost clone, which is every test that is not about the job images.
+        self.images = None
         self.write_stubs()
 
     def tearDown(self):
@@ -159,6 +174,10 @@ class DokkuReconcileTest(unittest.TestCase):
 
     def write_stubs(self, ps_all=PS_ALL, probe_code="200"):
         write_stub(self.stub, "docker", f"""
+# The image store and the runner's config, when a test gives the box one. tests/fake_docker_images.py answers for them.
+if [ -n "${{FAKE_DOCKER_IMAGES:-}}" ]; then
+  case "$1 $2" in "image ls"|"image inspect"|"exec act_runner") exec python3 {FAKE_IMAGES!r} "$@" ;; esac
+fi
 case "$*" in
   "ps -a --format {{{{.Names}}}} {{{{.State}}}}") printf '%b' {json.dumps(ps_all)} ;;
   "ps -a --format {{{{.Names}}}}") printf '%b' {json.dumps(ps_all)} | awk '{{print $1}}' ;;
@@ -236,6 +255,14 @@ esac
             "ROOST_PULSE_URL": self.pulse,
             "DOKKU_TARGET": "dokku@localhost",
         })
+        for name in ("ROOST_JOB_IMAGES_TOOL", "ROOST_JOB_IMAGES_SEEN", "FAKE_DOCKER_IMAGES"):
+            env.pop(name, None)
+        if self.images is not None:
+            # A box with the roost clone on it: the reader is this repository's own, and the stub docker holds these images.
+            box = os.path.join(self.tmp, "box.json")
+            with open(box, "w") as fh:
+                json.dump({"config": RUNNER_CONFIG, "images": self.images}, fh)
+            env.update({"ROOST_JOB_IMAGES_TOOL": JOB_IMAGES, "FAKE_DOCKER_IMAGES": box, "ROOST_WORKFLOW_ROOTS": self.home})
         return subprocess.run(
             ["bash", SCRIPT], env=env, capture_output=True, text=True, timeout=120)
 
@@ -814,6 +841,78 @@ esac
         self.run_script()
 
         self.assertNotIn("mesh-receiver", self.rows())
+
+    # ── the images a forge job starts in ─────────────────────────────────
+
+    def job_image_events(self):
+        return [event for event in self.events() if event.get("kind") == "job-image"]
+
+    def test_a_job_image_the_runner_wants_and_the_box_lost_is_named(self):
+        # On 2026-10-04 the weekly prune removed roost-ci:arm64, and the first sign was a failed job in a new repository a day later.
+        self.images = {"roost-swift-ci:6.1-noble": SWIFT_61}
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("job image roost-ci:arm64: the box does not hold it, and the runner labels self-hosted linux map to it", result.stdout)
+        self.assertIn("job images missing: roost-ci:arm64", result.stdout)
+        row = self.rows()["roost-ci:arm64"]
+        self.assertEqual((row["kind"], row["state"]), ("job-image", "missing"))
+        self.assertEqual(row["labels"], ["self-hosted", "linux"])
+        self.assertFalse(row["image"])
+        events = self.job_image_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["tone"], "bad")
+        self.assertEqual(events[0]["detail"]["images"], ["roost-ci:arm64"])
+
+    def test_every_job_image_the_box_holds_is_a_row_with_its_swift(self):
+        self.images = {"roost-ci:arm64": ROOST_CI, "roost-swift-ci:6.1-noble": SWIFT_61}
+
+        result = self.run_script()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("job image", result.stdout)
+        row = self.rows()["roost-swift-ci:6.1-noble"]
+        self.assertEqual((row["state"], row["swift"], row["swiftSource"], row["sizeMb"]), ("held", "6.1", "tag", 4530))
+        self.assertEqual(self.rows()["roost-ci:arm64"]["state"], "held")
+        self.assertEqual(self.job_image_events(), [])
+
+    def test_a_missing_job_image_is_one_event_and_not_one_per_pass(self):
+        # The pass runs every ten minutes, and an image stays gone until a person builds it.
+        self.images = {"roost-swift-ci:6.1-noble": SWIFT_61}
+        self.run_script()
+        Pulse.posts = []
+
+        result = self.run_script()
+
+        self.assertIn("job images missing: roost-ci:arm64", result.stdout)
+        self.assertEqual(self.job_image_events(), [])
+
+    def test_a_job_image_that_returns_is_one_event(self):
+        self.images = {"roost-swift-ci:6.1-noble": SWIFT_61}
+        self.run_script()
+        Pulse.posts = []
+        self.images = {"roost-ci:arm64": ROOST_CI, "roost-swift-ci:6.1-noble": SWIFT_61}
+
+        self.run_script()
+
+        events = self.job_image_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["tone"], "go")
+
+    def test_the_runner_cache_secret_reaches_no_journal_and_no_reading(self):
+        self.images = {"roost-swift-ci:6.1-noble": SWIFT_61}
+
+        result = self.run_script()
+
+        self.assertNotIn("made-up-cache-secret", result.stdout + result.stderr)
+        self.assertNotIn("made-up-cache-secret", json.dumps(Pulse.posts))
+
+    def test_a_box_with_no_roost_clone_asks_about_no_image(self):
+        result = self.run_script()
+
+        self.assertNotIn("job image", result.stdout)
+        self.assertEqual([row for row in self.reading()["apps"] if row.get("kind") == "job-image"], [])
 
 
 if __name__ == "__main__":
