@@ -14,8 +14,12 @@ if [ "${1:-}" = "--dry-run" ]; then
   echo "kept, labelled house.job-image:"
   docker images --filter label=house.job-image --format '  {{.Repository}}:{{.Tag}}  {{.CreatedSince}}  {{.Size}}'
   echo "considered, a week old and unlabelled (those a container uses stay):"
-  docker images --filter until=168h --format '{{.ID}} {{.Repository}}:{{.Tag}}  {{.CreatedSince}}  {{.Size}}' | while read -r id rest; do
-    [ -n "$(docker image inspect "$id" --format '{{index .Config.Labels "house.job-image"}}' 2>/dev/null)" ] || echo "  $rest"
+  # `docker images` has no filter by age, so each image's own creation time is read and compared.
+  limit=$(( $(date +%s) - 168 * 3600 ))
+  docker images --format '{{.ID}} {{.Repository}}:{{.Tag}}' | sort -u | while read -r id name; do
+    [ -z "$(docker image inspect "$id" --format '{{index .Config.Labels "house.job-image"}}' 2>/dev/null)" ] || continue
+    created=$(date -d "$(docker image inspect "$id" --format '{{.Created}}' 2>/dev/null)" +%s 2>/dev/null) || continue
+    [ "$created" -lt "$limit" ] && echo "  $name  $(( ($(date +%s) - created) / 86400 )) days old"
   done
   exit 0
 fi
