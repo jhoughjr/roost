@@ -28,7 +28,9 @@ Usage:
   ha-scoop.py --entities    list HA's power entities and exit (to build config)
 
 Config, via ~/.roostrc KEY=VALUE lines:
-  ROOST_HA_URL         HA base URL (default http://opi.local:8123)
+  ROOST_HA_URL         HA base URL (default http://opi.local:8123). A comma list is
+                       tried in order, so a laptop names the LAN address first
+                       and the name that Tailscale answers second.
   ROOST_HA_ENTITIES    comma list of `label=entity_id`, where label matches the
                        ROOST_TAPO_DEVICES label so both sources describe the
                        same device, e.g. room=sensor.room_power_current_consumption
@@ -105,8 +107,23 @@ async def ws_call(url, token, message):
     HA greets, demands auth, then answers commands by id. Nothing here is
     long-lived: a scoop is a cron-shaped job, not a subscription.
     """
+    # The address is one URL or a comma list tried in order. On 2026-10-05 the air's scoop was found failing on every
+    # run: its one address was a name that resolves to the opi's Tailscale address, and Tailscale is off at home,
+    # where ssh already tries the LAN address first. A connection that does not open in five seconds gives way to the next.
+    urls = [u.strip().rstrip("/") for u in url.split(",") if u.strip()]
+    refused = []
+    for base in urls:
+        try:
+            return await ws_round_trip(base, token, message)
+        except (aiohttp.ClientConnectionError, asyncio.TimeoutError, OSError) as error:
+            refused.append(f"{base}: {type(error).__name__}")
+    sys.exit("ha-scoop: no HA address answered: " + "; ".join(refused))
+
+
+async def ws_round_trip(url, token, message):
+    """The round-trip against one address. A connection that does not open raises, and ``ws_call`` tries the next."""
     ws_url = url.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, connect=5, sock_connect=5)) as session:
         async with session.ws_connect(ws_url, timeout=aiohttp.ClientWSTimeout(ws_close=20)) as ws:
             await ws.receive_json()  # auth_required
             await ws.send_json({"type": "auth", "access_token": token})

@@ -170,7 +170,8 @@ def config():
         "bulbW": float(cfg.get("ROOST_TAPO_BULB_W", "8.7") or 8.7),
         "pulse": cfg.get("ROOST_PULSE_URL", "https://pulse.jimmyhoughjr.net").rstrip("/"),
         "ha": ha_map(cfg),
-        "haUrl": cfg.get("ROOST_HA_URL", "http://opi.local:8123").rstrip("/"),
+        # ha-scoop reads this setting as a list tried in order. This poller runs beside HA and takes the first.
+        "haUrl": cfg.get("ROOST_HA_URL", "http://opi.local:8123").split(",")[0].strip().rstrip("/"),
         "haToken": ha_token(cfg),
     }
 
